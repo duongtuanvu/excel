@@ -1,37 +1,62 @@
-# KySheet v0.3 — Excel report automation
+# KySheet v0.4 — Excel report automation
 
-Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Không có backend, tài khoản, database server hay IndexedDB. Workbook và bảng DuckDB chỉ tồn tại trong bộ nhớ của phiên hiện tại. Người dùng có hồ sơ local tùy chọn, thư viện mẫu local và có thể xuất/nhập mẫu JSON hoặc xuất kết quả ra XLSX/CSV.
+Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Branch auth yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
 
-## Chạy local
+## Build và kiểm thử
 
-Yêu cầu Node.js >= 22.12; npm hoặc Bun. Clone repo và chạy:
+Node.js >= 22.12; npm hoặc Bun.
 
-    git clone https://github.com/duongtuanvu/excel.git
+    git clone -b auth https://github.com/duongtuanvu/excel.git
     cd excel
-    npm install
-    npm run dev
+    bun install
+    bun run build
+    bun run test
 
-Hoặc `bun install` và `bun run dev`. Mở URL Vite (mặc định http://127.0.0.1:5173). Không mở index.html qua file://.
+Vite dev/preview đơn thuần không có Workers API; màn hình auth sẽ không mở workspace. Dùng Worker local với database/credentials test và origin/callback tương ứng hoặc môi trường staging riêng. Không dùng D1 production cho test. Bộ E2E v0.3 trước đây giả định guest; cần điều chỉnh fixture xác thực trước khi coi pass. Lockfile/CI và build auth chưa được xác minh.
 
-    npm test
-    npm run build
-    npm run preview
-    npx playwright install chromium
-    npm run test:e2e
+## Cloudflare Workers Builds — Production
 
-Test model dùng Node test runner, test E2E dùng Playwright với bản build đã tạo. Sau lần cài thành công, commit lockfile để CI/deploy tái lập được. Phiên bản trực tiếp đã pin; lockfile chưa được tạo vì môi trường phát triển không truy cập được registry.
-
-## Cloudflare Workers Builds (Static Assets)
+**Chưa chuyển production branch sang auth nếu OAuth và kiểm thử chưa sẵn sàng.** File `wrangler.jsonc` trong branch này là cấu hình production thật, không dùng để deploy Worker staging hoặc preview auth kết nối D1 production.
 
 | Setting | Value |
 | --- | --- |
-| Production branch | main |
-| Build command | npm run build (hoặc bun run build) |
-| Deploy command | npx wrangler deploy --assets=./dist --name TEN_WORKER |
+| Repository | duongtuanvu/excel |
+| Production branch | main sau khi merge auth đã nghiệm thu |
+| Worker name | excel |
+| Domain hiện tại (quản lý trên Dashboard) | https://excel.linhsumi.io.vn |
+| Build command | bun run build |
+| Deploy command | npx wrangler deploy |
 | Root directory | / |
-| NODE_VERSION | 22 |
+| D1 binding | DB |
+| Database name | kysheet |
+| APP_ORIGIN | https://excel.linhsumi.io.vn |
 
-Thay TEN_WORKER bằng tên Worker thật trên dashboard. Sau khi đổi Production branch, tạo deployment mới từ repo duongtuanvu/excel, branch main; không retry build cũ của repo ai. Không cần Worker script, D1 hoặc R2.
+`wrangler.jsonc` có Worker entry `worker/index.ts`, assets `./dist`, binding ASSETS, selective routing `/api/*`. Không dùng lệnh deploy chỉ có --assets. `keep_vars: true` giữ biến Dashboard khi deploy; không đưa secrets vào GitHub. `workers_dev: false` và không khai báo routes để tiếp tục quản lý custom domain trên Dashboard. Kiểm tra lại Domains sau deployment. Tắt non-production branch builds sử dụng cấu hình production; staging dùng Worker, D1, OAuth client/callback và Wrangler config riêng từ `wrangler.auth.jsonc.example`.
+
+### Google OAuth
+
+Google Auth Platform → Clients → Create client → Web application. Authorized redirect URI production:
+
+    https://excel.linhsumi.io.vn/api/auth/callback
+
+Chỉ yêu cầu openid/email/profile. Trong Worker Settings → Variables and Secrets, tạo GOOGLE_CLIENT_ID (Text) và GOOGLE_CLIENT_SECRET (Secret). APP_ORIGIN được quản lý bằng Wrangler. Không dùng Build Variables hoặc VITE_ cho OAuth secret. Nếu static-only Worker chưa cho phép tạo runtime bindings/secrets, deploy auth trong khung bảo trì sau khi chuẩn bị credentials hoặc dùng triển khai staging riêng; login chỉ hoạt động khi runtime secrets đầy đủ. Không gửi secret qua chat.
+
+### D1 database
+
+Chủ dự án xác nhận đã tạo users, user_settings, sessions, oauth_attempts qua D1 Console. Wrangler sẽ tự bind database kysheet với tên DB khi deploy Worker script. Không cần tạo lại database. Kiểm tra schema và index trong Console:
+
+    SELECT name, type FROM sqlite_master WHERE name IN ('users','user_settings','sessions','oauth_attempts','sessions_expiry','sessions_owner','oauth_expiry') ORDER BY type,name;
+
+Migration 0001 được đổi thành idempotent IF NOT EXISTS để có thể ghi nhận bằng Wrangler sau khi xác minh bảng/cột/index đã đúng schema; IF NOT EXISTS không sửa bảng sai cấu trúc. Không chạy migration tự động trong mỗi build. Nếu cần, chủ động chạy:
+
+    npx wrangler d1 migrations apply DB --remote
+
+### Kiểm thử trước release
+
+- Build và typecheck branch auth. Staging dùng DB test riêng, không có dữ liệu thật.
+- Kiểm tra callback/Google login, session expiry, logout, lưu hồ sơ và mẫu, lưu/khôi phục cấu hình.
+- Kiểm thử hai tài khoản A/B trên hai browser context; sửa payload hoặc user header, hai tab cùng lưu, đổi tài khoản, CSRF, stale session.
+- Sau deploy production: xác minh D1 binding DB, custom domain, API GET /api/session trả HTTP 401 JSON khi chưa đăng nhập, login và lưu cấu hình hoạt động. Chuẩn bị rollback bản v0.3 và không phá dữ liệu D1.
 
 Mặc định build chỉ tải **binary WASM tĩnh, pin 1.30.0** từ jsDelivr ở runtime; worker JS và phần còn lại được host cùng website. Lý do: giới hạn 25 MiB/file trên Cloudflare Workers Static Assets có thể không phù hợp với WASM DuckDB. CDN không nhận workbook, câu truy vấn hay kết quả. Nếu CDN bị chặn, ứng dụng sẽ không khởi tạo được engine.
 
@@ -45,7 +70,7 @@ Nếu cần host hoàn toàn nội bộ/không gọi CDN, dùng `npm run build:l
 - Import/export mẫu JSON có version, kiểm tra tương thích schema theo tên cột; dữ liệu không được lưu trong template (giá trị bộ lọc có thể chứa dữ liệu nhạy cảm, cần cân nhắc trước khi chia sẻ).
 - XLSX xuất 3 sheet (Tổng quan, Tổng hợp, Dữ liệu đã lọc); CSV xuất bảng tổng hợp, trung hòa công thức từ text.
 - Giao diện responsive; dữ liệu mẫu để thử nhanh.
-- Không gian cá nhân: tên hiển thị, tên workspace, mật độ bảng, tối đa 20 mẫu lưu LocalStorage, áp dụng/xuất JSON/xóa mẫu, đặt lại hồ sơ. Không có xác thực, phân quyền hay đồng bộ tài khoản.
+- Không gian cá nhân: Google login, session server-side, tên hiển thị, tên workspace, mật độ bảng, tối đa 20 mẫu và cấu hình gần nhất lưu D1 theo user xác thực, áp dụng/xuất JSON/xóa mẫu, đặt lại hồ sơ và logout. Đã code, chưa nghiệm thu.
 
 ## Kiến trúc
 
@@ -64,12 +89,12 @@ Không có SQL editor hoặc execute SQL của người dùng; tên cột nội 
 - 5.000 nhóm; nếu vượt, cảnh báo và chặn export thay vì xuất thiếu. Bảng dữ liệu nguồn 50 dòng/trang, chart 12 nhóm đầu.
 - Giả định hàng dữ liệu không trống đầu tiên là tiêu đề. Không tính lại công thức Excel; chỉ dùng giá trị cache. Ngày trong Excel có thể được chuyển thành ISO; kiểu của cột dữ liệu trộn là text. Mã dạng chuỗi có số 0 ở đầu được giữ dạng text; mã số có format Excel đặc biệt có thể mất format gốc.
 - Số thực được tổng hợp kiểu DOUBLE, không thay cho đối soát tài chính chính xác theo decimal.
-- Giới hạn không bảo đảm chống mọi workbook nén độc hại; chỉ mở file từ nguồn tin cậy. Reload mất workbook và kết quả; chỉ hồ sơ và mẫu lưu chủ động tồn tại trong LocalStorage. Kho mẫu tối đa 512.000 ký tự; người dùng cùng browser profile/origin có thể đọc dữ liệu local. Khi storage bị chặn, thay đổi chỉ tồn tại trong phiên; có cảnh báo. Nhiều tab có thể ghi đè nhau; nên chỉnh sửa kho mẫu trong một tab.
+- Giới hạn không bảo đảm chống mọi workbook nén độc hại; chỉ mở file từ nguồn tin cậy. Reload mất workbook và kết quả; hồ sơ, mẫu và cấu hình đã lưu tồn tại trong D1. Giới hạn payload 512.000 byte UTF-8; revision CAS từ chối cập nhật cũ. Giá trị bộ lọc và tên cột có thể nhạy cảm. Không tự nhập LocalStorage cũ.
 - Build và E2E cần được chạy tại môi trường có internet để cài dependencies. Safari/iOS và tải lớn cần benchmark riêng.
 
-## Tài khoản thực (thiết kế giai đoạn sau)
+## Tài khoản
 
-Giữ Guest/local-first cho mọi tính năng xử lý Excel. Nếu cần đăng nhập thật và đồng bộ đa thiết bị, dùng nhà cung cấp xác thực OAuth/OIDC có hỗ trợ Authorization Code + PKCE, session server-side hoặc cookie HttpOnly/Secure/SameSite phù hợp, Workers API cho hồ sơ/metadata mẫu, D1 cho user và mẫu có owner_id. Kiểm tra quyền sở hữu ở mọi truy vấn, không tin role từ client, chống CSRF và rate-limit auth. Chỉ đồng bộ mẫu khi người dùng đồng ý; không gửi workbook hay kết quả. Cần chọn nhà cung cấp, domain và môi trường triển khai trước khi tích hợp; chưa có backend auth hoặc database này trong repo.
+Google OAuth server-side Authorization Code + PKCE; cookie HttpOnly, Secure, SameSite=Lax, session token hash lưu D1. API dựa trên user_id của session, không tin owner_id từ frontend; origin check và revision CAS. Không lưu Google access token/password, workbook hoặc kết quả phân tích trên D1. Các guard và flow đã code, chưa kiểm thử tích hợp hoặc audit bảo mật. Cần rate limiting auth/API, kiểm thử cách ly user, chính sách riêng tư và hoàn tất QA trước release.
 
 ## Roadmap
 

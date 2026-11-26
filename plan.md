@@ -43,7 +43,7 @@ KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hư�
 | 08 | Report Automation & Templates | P0 | Một phần |
 | 09 | Export & Sharing | P1 | Một phần |
 | 10 | Performance, PWA, Security & Accessibility | P1 | Một phần |
-| 11 | Auth, User Storage & User Management | P0 | Ưu tiên ngay, trước Phase 03 |
+| 11 | Auth, User Storage & User Management | P0 | Source MVP + config D1 đã có; chờ OAuth và nghiệm thu |
 | 12 | AI Report Builder | P3 | Chưa có, tùy chọn |
 | 13 | Release & Product Validation | P1 | Chưa nghiệm thu |
 
@@ -63,7 +63,7 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 - [ ] 00.06 Cài dependency bằng Bun/npm trên Node tương thích; xác minh phiên bản/package URL tồn tại, tạo và commit một lockfile; dùng frozen install trong CI.
 - [ ] 00.07 Chạy TypeScript check và production build; xử lý tất cả lỗi dependency, type, asset và worker bundling.
 - [ ] 00.08 Chạy unit test và E2E hiện có; sửa lỗi và bổ sung fixture hồi quy nếu phát hiện.
-- [ ] 00.09 Chuẩn hóa Wrangler: pin phiên bản, cấu hình Static Assets ./dist, SPA fallback khi cần; tên Worker phải khớp môi trường thực tế, không hardcode tên chưa xác nhận.
+- [x] 00.09 Source cấu hình Wrangler production: Worker excel, ./dist + worker/index.ts, SPA fallback, D1 binding DB; phiên bản Wrangler pin. Chưa xác minh deploy.
 - [ ] 00.10 Kiểm tra kích thước từng asset theo giới hạn Workers; xác minh WASM, MIME, CORS, cache và URL worker sau deploy.
 - [ ] 00.11 Deploy từ duongtuanvu/excel:main; smoke test URL thật, demo/import/filter/export/User Center, cả reload.
 - [ ] 00.12 CI cho typecheck, unit test, build, E2E và secret/dependency scan; hướng dẫn rollback theo commit/release.
@@ -249,11 +249,16 @@ Yêu cầu mới: đăng nhập bắt buộc, người dùng chỉ truy cập c�
 - [x] 11.01 Có UI hồ sơ local làm baseline để chuyển đổi.
 - [x] 11.01a Chốt kiến trúc MVP: Google login + session cookie HttpOnly/Secure/SameSite, Workers API + D1, không có guest.
 - [ ] 11.02 Cấu hình OAuth client, domain/callback, D1 binding/migration và secrets trong môi trường staging; chính sách dữ liệu.
-- [ ] 11.03 Login Google, tạo tài khoản lần đầu, logout/revoke session, chống CSRF, state/PKCE, cookie bảo mật, session hết hạn. Không có password auth.
-- [ ] 11.03a Login gate trước khi khởi tạo Excel engine; logout/401 phải loại bỏ dữ liệu phiên khỏi workspace.
-- [ ] 11.04 Workers API và D1 migration cho user/session/settings; lưu hồ sơ, template và cấu hình báo cáo gần nhất theo user_id xác thực; giới hạn payload và schema.
-- [ ] 11.05 Authorization server-side theo session user_id; không nhận owner_id từ client; test tài khoản A/B không thấy/sửa dữ liệu của nhau.
-- [ ] 11.06 Lưu/khôi phục cấu hình qua nhiều thiết bị, revision CAS chống ghi đè tab; lỗi lưu hiển thị rõ. Không upload workbook/kết quả. Offline queue/auto-save nâng cao để sau.
+- [x] 11.03 Source login Google, tạo tài khoản lần đầu, logout/revoke session, origin check, state/PKCE, cookie bảo mật, session hết hạn. Chưa kiểm thử tích hợp.
+- [x] 11.03a Source login gate trước khi khởi tạo Excel engine; logout/401 unmount workspace. Chưa nghiệm thu.
+- [x] 11.04 Source Workers API và D1 migration cho user/session/settings; lưu hồ sơ, template và cấu hình báo cáo gần nhất theo user_id xác thực; giới hạn payload và schema.
+- [x] 11.04a Chủ dự án xác nhận tạo D1 kysheet và 4 bảng nghiệp vụ qua Console.
+- [x] 11.04b Commit cấu hình binding DB cho Worker excel, database kysheet; chưa deploy binding thực tế.
+- [ ] 11.04c Xác minh schema/index, D1 binding runtime và OAuth secrets sau deploy.
+- [x] 11.05 Source authorization server-side theo session user_id; không lấy owner_id từ client.
+- [ ] 11.05a Test tài khoản A/B không thấy/sửa dữ liệu của nhau.
+- [x] 11.06 Source lưu/khôi phục cấu hình qua API, revision CAS và hiển thị lỗi lưu; workbook/kết quả không gửi API.
+- [ ] 11.06a Kiểm thử đồng bộ đa thiết bị và ghi đồng thời; offline queue/auto-save nâng cao để sau.
 - [ ] 11.07 Workspace/team, invitation, role owner/editor/viewer, quyền truy cập và thu hồi.
 - [ ] 11.08 Quản lý tài khoản, export dữ liệu, xóa tài khoản, session revocation và retention.
 - [ ] 11.09 Admin console, abuse/rate limit, audit log không chứa dữ liệu nguồn, quota và đo chi phí thực.
@@ -302,14 +307,16 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 
 ## 6. Bằng chứng và công việc tiếp theo
 
+- Auth source: commit `25bbe3a` (branch auth). D1 kysheet và 4 bảng do chủ dự án xác nhận; cấu hình Wrangler production đã được chuẩn bị, chưa có kết quả deploy/build/auth test.
+
 | Ngày | Commit / tham chiếu | Bằng chứng | Trạng thái |
 |---|---|---|---|
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** triển khai 11.03–11.06 trước trên branch auth, cập nhật Phase 02 và Phase 00. Chỉ merge/deploy main khi D1 + OAuth đã cấu hình và test login, logout, cách ly user A/B đạt. Phase 03 tạm dừng.
+**Next action:** cấu hình Google OAuth và secrets, xác minh schema D1, build/test trên staging với DB riêng; sau nghiệm thu mới merge/deploy main. Worker excel hiện static-only; binding DB được áp dụng khi deploy script từ Wrangler. Phase 03 tạm dừng.
 
-**Known risks:** OAuth client/D1 binding chưa cấu hình; cần xác nhận tên Worker thực tế, migration và callback trước release.  chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
+**Known risks:** OAuth client/secrets chưa xác nhận; cấu hình D1 production đã có trong repo nhưng chưa deploy. Chủ dự án đã tạo bảng qua Console; cần kiểm tra schema/index và migration tracking trước release.  chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
 ## 7. Definition of Done
 

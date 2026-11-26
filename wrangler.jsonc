@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "excel",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-26",
+  "workers_dev": false,
+  "keep_vars": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "vars": {
+    "APP_ORIGIN": "https://excel.linhsumi.io.vn"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kysheet",
+      "database_id": "79b6144b-d385-4bd2-aa45-246b05a29d54",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
