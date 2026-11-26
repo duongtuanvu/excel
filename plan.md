@@ -402,3 +402,5 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Sửa SQL aggregate count về INTEGER (giới hạn 100.000 dòng), tránh SUM(BIGINT) trả HUGEINT/Arrow decimal; thêm assertion SQL và fail-fast lỗi runtime trong E2E. Đây là nguyên nhân nghi ngờ từ source, cần kiểm chứng bằng CI.
 - [x] Source release job opt-in trailer `Release-KySheet: approved`, needs unit/build, contents:write chỉ ở job release, kiểm tra SHA/ancestor, non-force fast-forward và verify remote main. Upload diagnostics khi CI lỗi.
 - [ ] CI và release job v0.5.2 pass, xác minh HEAD main, Cloudflare deploy/smoke test. Không tick cho đến khi có bằng chứng.
+
+- Sửa cú pháp YAML biểu thức if chứa dấu hai chấm bằng folded scalar; run 45769208332 bị từ chối trước khi tạo job.

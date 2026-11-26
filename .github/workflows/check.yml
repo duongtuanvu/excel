@@ -41,7 +41,8 @@ jobs:
   release:
     name: Release tested module to main
     needs: [unit, build]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/') && contains(github.event.head_commit.message, 'Release-KySheet: approved') }}
+    if: >-
+      ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/') && contains(github.event.head_commit.message, 'Release-KySheet: approved') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
