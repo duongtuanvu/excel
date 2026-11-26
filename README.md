@@ -145,3 +145,6 @@ Module feature branches use the existing full unit/integration and TypeScript/Vi
 ## Schema Editor v0.5.3
 
 Chọn Cấu trúc cột → Chỉnh cấu trúc → đổi tên/kiểu → Kiểm tra chuyển đổi → Áp dụng cấu trúc. Worker đọc workbook gốc, đếm lỗi và chặn áp dụng nếu có lỗi; giữ nguyên bảng cũ và report. Số Việt Nam dùng dấu chấm nhóm và dấu phẩy thập phân, ngày DD/MM/YYYY được kiểm tra lịch, số nguyên ngoài safe integer bị từ chối ở chế độ số explicit. Text giữ leading zero có sẵn trong chuỗi, không phục hồi định dạng hiển thị Excel. Lưu workspace để lưu rule theo tên cột gốc; file kỳ mới áp dụng rule trước khi kiểm tra tương thích. Client cũ không có header schema capability sẽ bị từ chối ghi nếu đã lưu rule. Không migration D1. Không hỗ trợ header/range, mapping cột gốc khác tên hoặc arbitrary locale; DOUBLE vẫn có giới hạn độ chính xác.
+
+## Import layout & mapping v0.5.4
+Sau khi mở nguồn, chọn Vùng dữ liệu và mapping để chỉnh dòng header, cột đầu và dòng/cột cuối (trống = tự mở rộng). Header gộp bị từ chối ở chế độ chọn vùng. Preview kiểm tra xung đột cấu hình; reset báo cáo cần xác nhận. Thay file có mapping ghép từng cột hiện tại với cột file mới, giữ mode chuyển kiểu, kiểm tra schema trước khi apply transaction. Lưu workspace để giữ layout và mapping. Không migration D1. Chưa có batch refresh, chọn vùng trước lần import đầu hoặc tự điền merge-cell.

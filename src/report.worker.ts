@@ -12,6 +12,8 @@ import type { SourceProfile } from './profile-model';
 import { profileSource, profileDistribution } from './profile-engine';
 import { convertSchemaCell, resolveSchema, remapSchemaConfig } from './schema-model';
 import type { SchemaRule, SchemaPreview, SchemaIssue } from './schema-model';
+import { resolveLayout,validateLayout,layoutConfig,suggestMapping,mappedRules } from './import-model';
+import type { SheetBounds,ImportLayout,ColumnMapping,LayoutPreview } from './import-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -106,15 +108,19 @@ function asCell(value: unknown, kind: Kind): Cell {
 }
 const quoted = (v: Cell) => v === null ? '""' : '"' + String(v).replaceAll('"', '""') + '"';
 
-function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaRule[]=[], buildCsv=true) {
+function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaRule[]=[], buildCsv=true, layoutInput?:ImportLayout|null) {
   if (!book.SheetNames.includes(sheet)) throw new Error('Không tìm thấy sheet.');
   const ws = book.Sheets[sheet];
   if (!ws || !ws['!ref']) throw new Error('Sheet không có dữ liệu.');
-  const range = XLSX.utils.decode_range(ws['!fullref'] || ws['!ref']);
-  const width = range.e.c - range.s.c + 1;
-  const height = range.e.r - range.s.r + 1;
-  if (width > LIMITS.columns || height > LIMITS.rows + 1 || width * height > LIMITS.cells) throw new Error('Sheet vượt giới hạn 100.000 dòng, 100 cột hoặc 1 triệu ô.');
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null, blankrows: false });
+  const toBounds=(ref:string):SheetBounds=>{const r=XLSX.utils.decode_range(ref);return {firstRow:r.s.r+1,lastRow:r.e.r+1,firstColumn:r.s.c+1,lastColumn:r.e.c+1};};
+  const bounds=toBounds(ws['!fullref']||ws['!ref']),layout=validateLayout(layoutInput);
+  const selected=resolveLayout(bounds,toBounds(ws['!ref']),layout);
+  const range={s:{r:selected.firstRow-1,c:selected.firstColumn-1},e:{r:selected.lastRow-1,c:selected.lastColumn-1}};
+  const width=selected.lastColumn-selected.firstColumn+1;
+  if(layout && (ws['!merges']??[]).some(m=>m.s.r<=range.s.r&&m.e.r>=range.s.r&&m.s.c<=range.e.c&&m.e.c>=range.s.c))
+    throw new Error('LAYOUT_MERGED_HEADER: Hàng tiêu đề có ô gộp. Hãy chọn hàng tiêu đề không gộp.');
+  const matrix=XLSX.utils.sheet_to_json<unknown[]>(ws,{header:1,raw:true,defval:null,blankrows:!!layout,range});
+  if(layout && (!matrix[0]||matrix[0].every(v=>v==null||String(v).trim()==='')))throw new Error('LAYOUT_EMPTY_HEADER: Hàng tiêu đề không có giá trị.');
   if (!matrix.length) throw new Error('Không có hàng tiêu đề.');
   const headers = normalizeHeaders(Array.from({ length: width }, (_, i) => matrix[0][i]));
   const data = matrix.slice(1);
@@ -144,12 +150,12 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaR
     count++;
   }
   const issues:SchemaIssue[]=originalColumns.flatMap((c,i)=>invalid[i]?[{sourceName:c.name,name:columns[i].name,invalid:invalid[i]}]:[]);
-  return {csv:buildCsv?csv.join('\n'):'',next:{name,sheets:[...book.SheetNames],sheet,rows:count,columns} satisfies Source,originalColumns,schema,issues,chars};
+  return {csv:buildCsv?csv.join('\n'):'',next:{name,sheets:[...book.SheetNames],sheet,rows:count,columns} satisfies Source,originalColumns,schema,issues,chars,bounds,layout};
 }
 
 async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,restore?:SavedSource,edit?:ReturnType<typeof prepare>):Promise<Workspace>{
-  const prepared=edit??prepare(book.data,sheet,book.name,previous?.source.schema??restore?.schema??[]);
-  const {csv,next,originalColumns,schema,issues}=prepared;
+  const prepared=edit??prepare(book.data,sheet,book.name,previous?.source.schema??restore?.schema??[],true,previous?.source.layout??restore?.layout);
+  const {csv,next,originalColumns,schema,issues,bounds,layout}=prepared;
   if(issues.length)throw new Error('SCHEMA_CONVERSION_FAILED: '+issues.map(i=>i.name+' ('+i.invalid+' lỗi)').join(', ')+'. Nguồn cũ được giữ nguyên.');
   if(!edit&&(previous||restore)){
     const issues=replacementIssues(previous?.source.columns??restore!.columns,next.columns);
@@ -167,7 +173,7 @@ async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,rest
   const slotId=previous?.source.slotId??restore?.id??crypto.randomUUID();
   if(remaining.some(e=>e.source.slotId===slotId))throw new Error('WORKSPACE_SLOT_LOADED: Nguồn này đã được mở.');
   if(restore)compileReport(restore.config,next.columns,sourceTable(id));
-  const managed:ManagedSource={...next,id,slotId,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo,originalColumns,...(schema.length?{schema}:{})};
+  const managed:ManagedSource={...next,id,slotId,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo,originalColumns,bounds,...(schema.length?{schema}:{}),...(layout?{layout}:{})};
   const table=sourceTable(id), {db,conn}=await connect(), path='report_import.csv';
   await conn.query('DROP TABLE IF EXISTS report_stage');
   try {
@@ -278,10 +284,25 @@ async function getProfile(item:Entry):Promise<SourceProfile>{
 }
 function schemaCandidate(item:Entry,rules:SchemaRule[],config:Config,buildCsv:boolean){
   const source=item.source,book=bookFor(source);
-  const prepared=prepare(book.data,source.sheet,book.name,rules,buildCsv);
+  const prepared=prepare(book.data,source.sheet,book.name,rules,buildCsv,source.layout);
   const mapped=remapSchemaConfig(config,source.columns,prepared.next.columns);
   if(prepared.next.rows!==source.rows)throw new Error('SCHEMA_ROW_MISMATCH: Số dòng thay đổi ngoài dự kiến.');
   return {book,prepared,mapped};
+}
+function layoutCandidate(item:Entry,layout:ImportLayout|null,config:Config,buildCsv:boolean){
+ const book=bookFor(item.source),source=item.source;
+ const base=prepare(book.data,source.sheet,book.name,[],false,layout);
+ const rules=(source.schema??[]).filter(r=>base.originalColumns.some(c=>c.name===r.sourceName));
+ const prepared=rules.length||buildCsv?prepare(book.data,source.sheet,book.name,rules,buildCsv,layout):base;
+ const mapped=layoutConfig(config,source.columns,prepared.next.columns);
+ return {book,prepared,mapped};
+}
+function mappedCandidate(item:Entry,name:string,bytes:ArrayBuffer,mapping:ColumnMapping[],buildCsv:boolean){
+ const book=readBook(name,bytes),source=item.source,sheet=replacementSheet(source.sheet,book.data.SheetNames);
+ const base=prepare(book.data,sheet,book.name,[],false,source.layout);
+ const rules=mappedRules(source.columns,source.schema??[],base.originalColumns,mapping);
+ const prepared=prepare(book.data,sheet,book.name,rules,buildCsv,source.layout);
+ return {book,sheet,prepared,mismatches:replacementIssues(source.columns,prepared.next.columns)};
 }
 async function handle(req: Request):Promise<unknown>{
   switch(req.type){
@@ -329,6 +350,37 @@ async function handle(req: Request):Promise<unknown>{
       const item=entry(req.input.sourceId,req.input.revision);
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
+    }
+    case 'previewLayout':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
+      const {prepared,mapped}=layoutCandidate(item,req.input.layout,req.input.config,false);
+      return {sourceId:item.source.id,revision:item.source.revision,bounds:prepared.bounds,columns:prepared.next.columns,rows:prepared.next.rows,issues:prepared.issues,conflicts:mapped.conflicts,config:mapped.config} satisfies LayoutPreview;
+    }
+    case 'applyLayout':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
+      const {book,prepared,mapped}=layoutCandidate(item,req.input.layout,req.input.config,true);
+      if(mapped.conflicts.length&&req.input.resetReport!==true)throw new Error('LAYOUT_REPORT_CONFLICT: Cần xác nhận đặt lại báo cáo.');
+      const ws=await store(book,item.source.sheet,item,undefined,undefined,prepared);
+      return {workspace:ws,config:mapped.config};
+    }
+    case 'inspectReplacement':{
+      const item=entry(req.input.sourceId,req.input.revision),book=readBook(req.input.name,req.input.bytes);
+      const sheet=replacementSheet(item.source.sheet,book.data.SheetNames);
+      const prepared=prepare(book.data,sheet,book.name,[],false,item.source.layout);
+      return {sourceId:item.source.id,revision:item.source.revision,sheet,incoming:prepared.originalColumns,mapping:suggestMapping(item.source.columns,item.source.schema??[],prepared.originalColumns)};
+    }
+    case 'previewMapped':{
+      const item=entry(req.input.sourceId,req.input.revision),{prepared,mismatches}=mappedCandidate(item,req.input.name,req.input.bytes,req.input.mapping,false);
+      return {sourceId:item.source.id,revision:item.source.revision,rows:prepared.next.rows,columns:prepared.next.columns,issues:prepared.issues,mismatches};
+    }
+    case 'applyMapped':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
+      const {book,sheet,prepared,mismatches}=mappedCandidate(item,req.input.name,req.input.bytes,req.input.mapping,true);
+      if(mismatches.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+mismatches.join(', '));
+      return store(book,sheet,item,undefined,undefined,prepared);
     }
     case 'previewSchema':{
       const item=entry(req.input.sourceId,req.input.revision);

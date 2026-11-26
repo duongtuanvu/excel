@@ -416,3 +416,10 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [ ] CI pass, auto merge main và smoke test production. Header/range, histogram, custom mapping khác tên cột gốc và Excel format chưa có.
 
 - [x] CI run 45771288141: unit/integration, build pass; 11/12 E2E pass. Schema preview/apply/save assertions pass; restore sau reload còn lỗi, KPI vẫn 180 dòng demo. Source cho thấy E2E chỉ chờ KPI tồn tại, input hidden có thể nhận file trước khi Worker sẵn sàng và bỏ qua onChange. Sửa disabled input, báo WORKSPACE_BUSY thay vì bỏ qua file, E2E đợi demo hoàn tất và chọn qua filechooser thật; thêm regression file sai locale không thay nguồn trước khi restore file hợp lệ. Chờ CI mới, không bỏ assertion.
+
+### Import layout & mapping v0.5.4
+- [x] v0.5.3 CI 45771928085: 31 unit/integration, 12 E2E pass; auto merge main 7d66872.
+- [x] Source header/range selection, validation, preview and explicit report reset confirmation; persisted layout and mapped rules.
+- [x] Source replacement mapping per loaded source, strict conversion and compatibility checks, transactional apply.
+- [ ] CI and auto release v0.5.4; production smoke test.
+- [ ] Batch refresh multiple sources, merged-cell fill and import-time layout before initial source creation; separate follow-up.

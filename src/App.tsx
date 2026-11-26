@@ -6,6 +6,8 @@ import SourceManager from './SourceManager';
 import SavedWorkspacePanel from './SavedWorkspacePanel';
 import ProfilePanel from './ProfilePanel';
 import SchemaPanel from './SchemaPanel';
+import ImportPanel from './ImportPanel';
+import type { ImportLayout, ColumnMapping } from './import-model';
 import type { SchemaRule, SchemaPreview } from './schema-model';
 import type { Distribution, SourceProfile } from './profile-model';
 import { snapshotWorkspace, withoutSavedSource } from './workspace-model';
@@ -184,6 +186,21 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     return runProfile(e=>e.request('distribution',{sourceId:target.id,revision:target.revision,columnId}));
   }
 
+  function previewLayout(target:ManagedSource,layout:ImportLayout|null){
+    return runProfile(e=>e.request('previewLayout',{sourceId:target.id,revision:target.revision,layout,config}));
+  }
+  async function applyLayout(target:ManagedSource,layout:ImportLayout|null,resetReport:boolean){
+    await runProfile(async e=>{const r=await e.request('applyLayout',{sourceId:target.id,revision:target.revision,layout,config,resetReport});applyWorkspace(r.workspace,undefined,r.config);setNotice('Đã áp dụng vùng dữ liệu.');});
+  }
+  async function replacementRequest(target:ManagedSource,file:File,mapping?:ColumnMapping[],apply=false){
+    if(!/\.(xlsx|xls|csv|tsv)$/i.test(file.name)||!file.size||file.size>LIMITS.fileBytes)throw new Error('FILE_INVALID: File không hợp lệ hoặc vượt 25 MiB.');
+    return runProfile(async e=>{
+      const bytes=await file.arrayBuffer(),input={sourceId:target.id,revision:target.revision,name:file.name,bytes};
+      if(!mapping)return e.request('inspectReplacement',input,[bytes]);
+      if(!apply)return e.request('previewMapped',{...input,mapping},[bytes]);
+      const ws=await e.request('applyMapped',{...input,mapping},[bytes]);applyWorkspace(ws,undefined,config);setNotice('Đã thay nguồn theo mapping.');return null;
+    });
+  }
   function previewSchema(target:ManagedSource,rules:SchemaRule[]):Promise<SchemaPreview>{
     return runProfile(e=>e.request('previewSchema',{sourceId:target.id,revision:target.revision,rules,config}));
   }
@@ -323,7 +340,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.3</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.4</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -422,6 +439,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <section className="report-card chart-card"><div className="card-heading"><div><h2>Phân tích theo nhóm</h2><p>{label} · {aggregateLabel} · tối đa 12 nhóm đầu</p></div><div className="segmented" aria-label="Kiểu biểu đồ"><button className={config.chart === 'horizontal' ? 'active' : ''} aria-pressed={config.chart === 'horizontal'} disabled={locked} onClick={() => patch({chart:'horizontal'})}>Thanh</button><button className={config.chart === 'bar' ? 'active' : ''} aria-pressed={config.chart === 'bar'} disabled={locked} onClick={() => patch({chart:'bar'})}>Cột</button></div></div>
           {result ? <Chart groups={groups} mode={config.chart}/> : <div className="empty">{loading || busy ? <><span className="spinner"/> Đang tính báo cáo…</> : 'Chưa có kết quả.'}</div>}
         </section>
+        {source&&<ImportPanel key={'import:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewLayout} onApply={applyLayout} onReplacement={replacementRequest}/>}
         {source&&<SchemaPanel key={'schema:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewSchema} onApply={applySchema}/>}
         {source&&<ProfilePanel key={source.id+':'+source.revision} source={source} disabled={locked} onProfile={loadProfile} onDistribution={loadDistribution}/>}
         <section className="report-card table-card"><div className="card-heading"><div><h2>Chi tiết dữ liệu</h2><p>Kiểm tra kết quả và dữ liệu nguồn đã lọc</p></div><span className="table-tag"><Icon name="grid" size={15}/> {source ? columns.length : 0} cột</span></div>
