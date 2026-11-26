@@ -43,7 +43,7 @@ KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hư�
 | 08 | Report Automation & Templates | P0 | Một phần |
 | 09 | Export & Sharing | P1 | Một phần |
 | 10 | Performance, PWA, Security & Accessibility | P1 | Một phần |
-| 11 | Auth, User Storage & User Management | P0 | Source MVP + config D1 đã có; chờ OAuth và nghiệm thu |
+| 11 | Auth, User Storage & User Management | P0 | Google login production OK (chủ dự án); chờ nghiệm thu lưu cấu hình/cách ly tài khoản |
 | 12 | AI Report Builder | P3 | Chưa có, tùy chọn |
 | 13 | Release & Product Validation | P1 | Chưa nghiệm thu |
 
@@ -250,10 +250,11 @@ Yêu cầu mới: đăng nhập bắt buộc, người dùng chỉ truy cập c�
 - [x] 11.01a Chốt kiến trúc MVP: Google login + session cookie HttpOnly/Secure/SameSite, Workers API + D1, không có guest.
 - [ ] 11.02 Cấu hình OAuth client, domain/callback, D1 binding/migration và secrets trong môi trường staging; chính sách dữ liệu.
 - [x] 11.03 Source login Google, tạo tài khoản lần đầu, logout/revoke session, origin check, state/PKCE, cookie bảo mật, session hết hạn. Chưa kiểm thử tích hợp.
-- [x] 11.03a Source login gate trước khi khởi tạo Excel engine; logout/401 unmount workspace. Chưa nghiệm thu.
+- [x] 11.03a Source login gate trước khi khởi tạo Excel engine; logout/401 unmount workspace. Chưa nghiệm thu logout/expiry.
+- [x] 11.03b Chủ dự án xác nhận đăng nhập Google thành công trên production sau bản sửa OAuth transport `2b365f5` (26/11/2026). Đây là xác nhận vận hành luồng login, không phải kết quả toàn bộ auth test.
 - [x] 11.04 Source Workers API và D1 migration cho user/session/settings; lưu hồ sơ, template và cấu hình báo cáo gần nhất theo user_id xác thực; giới hạn payload và schema.
 - [x] 11.04a Chủ dự án xác nhận tạo D1 kysheet và 4 bảng nghiệp vụ qua Console.
-- [x] 11.04b Commit cấu hình binding DB cho Worker excel, database kysheet; chưa deploy binding thực tế.
+- [x] 11.04b Commit cấu hình binding DB cho Worker excel, database kysheet. Luồng login production đã hoạt động theo xác nhận chủ dự án.
 - [ ] 11.04c Xác minh schema/index, D1 binding runtime và OAuth secrets sau deploy.
 - [x] 11.05 Source authorization server-side theo session user_id; không lấy owner_id từ client.
 - [ ] 11.05a Test tài khoản A/B không thấy/sửa dữ liệu của nhau.
@@ -308,6 +309,8 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 
 ## 6. Bằng chứng và công việc tiếp theo
 
+- 2026-11-26: Chủ dự án xác nhận đăng nhập Google thành công trên production sau bản sửa `2b365f5`. Không suy ra các test lưu cấu hình, logout, tenant isolation, CI hoặc E2E đã pass.
+
 - Auth source: commit `25bbe3a` (branch auth). D1 kysheet và 4 bảng do chủ dự án xác nhận; cấu hình Wrangler production đã được chuẩn bị, chưa có kết quả deploy/build/auth test.
 
 | Ngày | Commit / tham chiếu | Bằng chứng | Trạng thái |
@@ -315,9 +318,9 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** cấu hình Google OAuth và secrets, xác minh schema D1, build/test trên staging với DB riêng; sau nghiệm thu mới merge/deploy main. Worker excel hiện static-only; binding DB được áp dụng khi deploy script từ Wrangler. Phase 03 tạm dừng.
+**Next action:** nghiệm thu Auth MVP: lưu hồ sơ, lưu mẫu và cấu hình, reload/đăng nhập lại, kiểm thử hai tài khoản A/B, logout/expiry và revision conflict; bổ sung regression/security tests. Sau khi qua gate này, tiếp tục Phase 03 (multi-source, multi-sheet, mapping và thay nguồn an toàn), rồi Phase 04 (JOIN/transform). Production main đã merge auth và chủ dự án xác nhận login thành công. Team/admin/billing chưa phải blocker của Phase 03.
 
-**Known risks:** OAuth client/secrets chưa xác nhận; cấu hình D1 production đã có trong repo nhưng chưa deploy. Chủ dự án đã tạo bảng qua Console; cần kiểm tra schema/index và migration tracking trước release.  chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
+**Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
 ## 7. Definition of Done
 
@@ -339,7 +342,7 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 ### OAuth troubleshooting
 
 - [x] Source chuẩn hóa/kiểm tra OAuth credentials, phân loại lỗi Google/D1 theo stage và log mã lỗi cố định không chứa bí mật.
-- [ ] Xác minh nguyên nhân lỗi login trên production và chạy lại flow Google thành công; chưa coi tính năng auth đã nghiệm thu.
+- [x] Chủ dự án xác nhận flow Google login thành công sau bản sửa `2b365f5`; chưa có trace runtime để khẳng định nguyên nhân duy nhất, chưa coi toàn bộ auth đã nghiệm thu.
 
 - [x] Sửa tương thích workerd: outbound Google fetch dùng manual, không follow redirect, phân loại network/timeout/HTTP và thêm source regression test.
-- [ ] Chạy test regression trên runtime phù hợp; xác nhận Google login production thành công sau deploy.
+- [ ] Chạy regression test trên runtime phù hợp; login production đã được chủ dự án xác nhận riêng.
