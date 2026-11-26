@@ -320,7 +320,7 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** nghiệm thu Auth MVP: lưu hồ sơ, lưu mẫu và cấu hình, reload/đăng nhập lại, kiểm thử hai tài khoản A/B, logout/expiry và revision conflict; bổ sung regression/security tests. Sau khi qua gate này, tiếp tục Phase 03 (multi-source, multi-sheet, mapping và thay nguồn an toàn), rồi Phase 04 (JOIN/transform). Production main đã merge auth và chủ dự án xác nhận login thành công. Team/admin/billing chưa phải blocker của Phase 03.
+**Next action:** xác minh CI v0.5.1 trên feature/multi-source, review rồi merge main. Smoke test production và cách ly hai user thật. Phase 03 tiếp theo: Data Profiling, schema editor, header/range, mapping và batch refresh trước Phase 04 JOIN/UNION.
 
 **Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
@@ -360,9 +360,19 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 ### Multi-source v0.5
 
 - [x] CI baseline c0b3a4a: 17/17 unit/integration tests pass, npm install và production build pass (run 45748267363).
-- [x] Sửa runner Ubuntu 26.04 không tương thích Playwright 1.55.1 bằng pin ubuntu-24.04; chờ CI mới.
+- [x] Sửa runner Ubuntu 26.04 bằng pin ubuntu-24.04; Chromium install pass run 45749263382.
 - [x] Source quản lý bảng DuckDB độc lập, alias, sheet, thay nguồn, revision, giới hạn workspace và lưu config theo nguồn trong RAM.
 - [x] Source regression test cho SQL table ID, schema compatibility, alias và budget.
-- [ ] E2E multi-source và build v0.5 pass; xác minh production trước merge.
-- [ ] Persist toàn bộ cấu hình workspace theo tài khoản (không lưu file hoặc kết quả); schema version/migration, restore mapping nguồn kỳ mới. Hiện chỉ lưu cấu hình/mẫu nguồn hiện tại như v0.4.
+- [x] v0.5 CI run 45749263382: 21/21 unit/integration pass, build pass, 6/7 E2E pass gồm multi-source; E2E export lỗi ở XLSX.readFile trong Node ESM.
+- [x] Source sửa E2E export dùng download.saveAs + readFileSync + XLSX.read, không bỏ bài test.
+- [ ] CI toàn bộ v0.5.1 pass và smoke test production sau merge.
+- [x] Source persist cấu hình workspace theo tài khoản: version 1, stable slot UUID, alias/sheet/schema/config từng nguồn, không lưu file hoặc kết quả. Tương thích payload cũ và CAS.
+- [x] Source restore từng slot bằng file tương thích, giữ các slot chưa nạp khi lưu; bỏ slot có xác nhận.
+- [x] Source unit/integration/E2E workspace: validate, isolation, legacy write, partial restore, sai schema, reset và forget.
+- [ ] CI workspace mới, kiểm thử hai tài khoản thật và multi-device trên D1 production.
 - [ ] Hoàn tất header/range, kiểu cột, profiling, mapping và batch refresh trước Phase 04.
+
+### Workspace account persistence v0.5.1
+
+- 2026-11-26: CI v0.5 `55dc6b0` (run 45749263382) xác nhận 21 unit/integration pass, build pass, Chromium pass, 6/7 E2E pass. Sửa lỗi test đọc file export bằng Node fs; không bỏ assertion nội dung workbook.
+- Không thay D1 schema/migration hoặc OAuth. Workspace lưu trong payload hiện hữu. Một workspace/account; người dùng phải chọn lại file cho từng slot. Chưa có map cột khác tên hoặc nhiều project/account. Checklist mới là implementation, chưa phải runtime nghiệm thu.

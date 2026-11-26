@@ -3,6 +3,9 @@ import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { EngineClient } from './worker-client';
 import UserCenter from './UserCenter';
 import SourceManager from './SourceManager';
+import SavedWorkspacePanel from './SavedWorkspacePanel';
+import { snapshotWorkspace, withoutSavedSource } from './workspace-model';
+import type { SavedSource } from './workspace-model';
 import type { ManagedSource, Workspace } from './source-model';
 import { initials } from './user-model';
 import type { AccountSnapshot, AccountSettings } from './account-model';
@@ -134,13 +137,14 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       setSources(ws.sources);
       if (!s) return;
       setSource(s);
-      const saved = session.settings.lastConfig;
+      const saved = session.settings.workspace ? null : session.settings.lastConfig;
       const mapped = saved ? reconcileConfig(saved, s.columns) : null;
       if (mapped && !mapped.missing.length) {
         setConfig(mapped.config); restored.current = true;
       } else {
         setConfig({ ...defaultConfig(s.columns), title: 'Tổng quan kinh doanh', groups: ['Khu vực'], metric: 'Doanh thu', aggregate: 'sum' });
-        if (saved) setNotice('Có cấu hình đã lưu. Import đúng file Excel để khôi phục.');
+        if (session.settings.workspace) setNotice('Có workspace đã lưu. Chọn file cho từng nguồn trong mục Workspace tài khoản.');
+        else if (saved) setNotice('Có cấu hình đã lưu. Import đúng file Excel để khôi phục.');
       }
     }).catch(e => { if (active) setError(errorText(e)); }).finally(() => {
       if (active) { busyRef.current = false; setBusy(''); }
@@ -173,13 +177,17 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   function filterPatch(i: number, update: Partial<Filter>) {
     patch({ filters: config.filters.map((f,j) => j === i ? {...f,...update} : f) });
   }
-  function applyWorkspace(ws: Workspace) {
+  function applyWorkspace(ws: Workspace, attached?: SavedSource) {
     if (source) sourceConfigs.current.set(source.id, config);
     const live = new Set(ws.sources.map(s => s.id));
     for (const id of sourceConfigs.current.keys()) if (!live.has(id)) sourceConfigs.current.delete(id);
     const next = ws.active;
     setSources(ws.sources); setSource(next); setSnapshot(null); setPage(0); setGroupPage(0);
     if (!next) { setConfig(defaultConfig([])); return; }
+    if (attached && next.slotId === attached.id) {
+      setConfig(attached.config); restored.current = true;
+      setNotice('Đã khôi phục nguồn '+attached.alias+' và cấu hình báo cáo.'); return;
+    }
     const existing = sourceConfigs.current.get(next.id);
     if (existing) {
       const mapped = reconcileConfig(existing, next.columns);
@@ -187,7 +195,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       setNotice('SOURCE_CONFIG_MISMATCH: Cấu hình cũ không còn tương thích; đã tạo cấu hình mới.');
     }
     const saved = session.settings.lastConfig;
-    if (!restored.current && saved && !next.demo) {
+    if (!session.settings.workspace && !restored.current && saved && !next.demo) {
       const mapped = reconcileConfig(saved, next.columns);
       if (!mapped.missing.length) {
         setConfig(mapped.config); restored.current = true;
@@ -196,10 +204,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     }
     setConfig(next.demo ? { ...defaultConfig(next.columns), title:'Tổng quan kinh doanh', groups:['Khu vực'], metric:'Doanh thu', aggregate:'sum' } : defaultConfig(next.columns));
   }
-  async function sourceAction(label: string, operation: (engine: EngineClient) => Promise<Workspace>) {
+  async function sourceAction(label: string, operation: (engine: EngineClient) => Promise<Workspace>, attached?: SavedSource) {
     if (busyRef.current || saving || accountBusy || !client.current) return;
     busyRef.current = true; setBusy(label); setError(''); setNotice(''); setQueryError('');
-    try { applyWorkspace(await operation(client.current)); }
+    try { applyWorkspace(await operation(client.current), attached); }
     catch (e) { setError(errorText(e)); }
     finally { busyRef.current = false; setBusy(''); }
   }
@@ -215,6 +223,31 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         ? engine.request('replaceSource', { name:file.name, bytes, sourceId:source.id, revision:source.revision }, [bytes])
         : engine.request('import', { name:file.name, bytes }, [bytes]);
     });
+  }
+  function attachSavedSource(slotId: string, file: File) {
+    if (locked || busyRef.current) return;
+    const slot=session.settings.workspace?.slots.find(s=>s.id===slotId);
+    if (!slot || sources.some(s=>s.slotId===slotId)) { setError('WORKSPACE_SLOT_INVALID: Nguồn đã thay đổi hoặc đã được mở.'); return; }
+    if (!/\.(xlsx|xls|csv|tsv)$/i.test(file.name) || file.size<=0 || file.size>LIMITS.fileBytes) {
+      setError('FILE_INVALID: Chọn file Excel, CSV hoặc TSV hợp lệ, tối đa 25 MiB.'); return;
+    }
+    void sourceAction('Đang khôi phục '+slot.alias+'…', async engine=>{
+      const bytes=await file.arrayBuffer();
+      return engine.request('restoreSource',{slot,name:file.name,bytes},[bytes]);
+    },slot);
+  }
+  function saveWorkspace() {
+    void accountAction(async()=>{
+      const workspace=snapshotWorkspace(session.settings.workspace,sources,s=>s.id===source?.id?config:sourceConfigs.current.get(s.id));
+      await saveSettings({...session.settings,workspace});
+    },'Đã lưu workspace vào tài khoản.');
+  }
+  function forgetSavedSource(id:string) {
+    void accountAction(async()=>{
+      const workspace=session.settings.workspace;
+      if(!workspace || !workspace.slots.some(s=>s.id===id) || sources.some(s=>s.slotId===id)) throw new Error('WORKSPACE_SLOT_INVALID: Hãy đóng nguồn trước khi bỏ cấu hình đã lưu.');
+      await saveSettings({...session.settings,workspace:withoutSavedSource(workspace,id)});
+    },'Đã bỏ cấu hình nguồn khỏi workspace tài khoản.');
   }
   async function openTemplate(file?: File) {
     if (!file || !source || busyRef.current) return;
@@ -245,7 +278,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     finally { setAccountBusy(false); }
   }
   async function persistProfile(next: LocalUser) {
-    await saveSettings({ ...next, lastConfig: session.settings.lastConfig });
+    await saveSettings({ ...session.settings, ...next });
   }
   function onDrop(e: DragEvent<HTMLButtonElement>) {
     e.preventDefault(); setDragging(false);
@@ -258,7 +291,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.1</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -298,6 +331,11 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
             onRemove={id=>void sourceAction('Đang xóa nguồn…',e=>e.request('removeSource',{sourceId:id}))}
             onReplace={()=>replaceInput.current?.click()}/>
           <button className="button text-button" disabled={locked} onClick={() => void sourceAction('Đang tạo dữ liệu mẫu…', engine => engine.request('demo', null))}><Icon name="refresh" size={15}/> Nạp dữ liệu mẫu</button>
+        </Panel>
+        <Panel title="Workspace tài khoản" icon="layers">
+          <SavedWorkspacePanel saved={session.settings.workspace} sources={sources} disabled={locked}
+            onSave={saveWorkspace} onAttach={attachSavedSource} onForget={forgetSavedSource}
+            onActivate={id=>void sourceAction('Đang chuyển nguồn…',e=>e.request('activateSource',{sourceId:id}))}/>
         </Panel>
         <fieldset className="settings" disabled={locked || !source}>
           <Panel title="Cấu hình báo cáo" icon="settings">

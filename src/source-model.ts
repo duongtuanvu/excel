@@ -1,7 +1,7 @@
 import type { Column, Source } from './model.ts';
 
 export const WORKSPACE_LIMITS = {sources:12, sheetsPerBook:32, bookBytes:50*1024*1024, bookCells:2_000_000, tableCells:2_000_000, tableChars:50_000_000, aliasLength:100} as const;
-export type ManagedSource = Source & {id:string; alias:string; bookId:string; revision:number; demo:boolean};
+export type ManagedSource = Source & {id:string; slotId:string; alias:string; bookId:string; revision:number; demo:boolean};
 export type Workspace = {active:ManagedSource|null; sources:ManagedSource[]};
 export type BookBudget = {bytes:number;cells:number;sheets:number};
 export type TableBudget = {rows:number;columns:Column[];chars:number};
@@ -26,7 +26,7 @@ export function uniqueAlias(input:string,used:readonly string[]):string {
   }
   return result;
 }
-export function replacementIssues(before:readonly Column[],after:readonly Column[]):string[]{
+export function replacementIssues(before:readonly Pick<Column,'name'|'kind'>[],after:readonly Pick<Column,'name'|'kind'>[]):string[]{
   const next=new Map(after.map(c=>[c.name,c.kind]));
   return before.flatMap(c=>!next.has(c.name)?[c.name+' (thiếu)']:next.get(c.name)!==c.kind?[c.name+' ('+c.kind+' → '+next.get(c.name)+')']:[]);
 }

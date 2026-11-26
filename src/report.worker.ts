@@ -6,6 +6,8 @@ import type { Cell, Column, Kind, Source, Config, Report, Group } from './model'
 import type { Request, Response } from './protocol';
 import { WORKSPACE_LIMITS, sourceTable, uniqueAlias, normalizeAlias, replacementIssues, replacementSheet, checkWorkspaceBudget } from './source-model';
 import type { ManagedSource, Workspace, BookBudget } from './source-model';
+import { validateSavedSource } from './workspace-model';
+import type { SavedSource } from './workspace-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -126,10 +128,10 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string) {
   return { csv: csv.join('\n'), next: { name, sheets: [...book.SheetNames], sheet, rows: count, columns } satisfies Source };
 }
 
-async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry):Promise<Workspace>{
+async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,restore?:SavedSource):Promise<Workspace>{
   const {csv,next}=prepare(book.data,sheet,book.name);
-  if(previous){
-    const issues=replacementIssues(previous.source.columns,next.columns);
+  if(previous||restore){
+    const issues=replacementIssues(previous?.source.columns??restore!.columns,next.columns);
     if(issues.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+issues.join(', ')+'. Nguồn cũ được giữ nguyên.');
   }
   const excluded=new Set([previous?.source.id,dropDemo?.source.id]);
@@ -139,8 +141,12 @@ async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry):Pro
   const allBooks=Array.from(books.values()).filter(b=>referenced.has(b.id)&&b.id!==book.id).concat(book);
   checkWorkspaceBudget(allBooks.map(b=>b.budget),[...remaining.map(e=>({rows:e.source.rows,columns:e.source.columns,chars:e.chars})),{rows:next.rows,columns:next.columns,chars:csv.length}]);
   const id=previous?.source.id??'s'+(++nextSource);
-  const alias=previous?.source.alias??uniqueAlias(book.demo?'Dữ liệu mẫu':book.name+' · '+sheet,remaining.map(e=>e.source.alias));
-  const managed:ManagedSource={...next,id,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo};
+  const used=remaining.map(e=>e.source.alias);
+  const alias=previous?.source.alias??(restore?normalizeAlias(restore.alias,used):uniqueAlias(book.demo?'Dữ liệu mẫu':book.name+' · '+sheet,used));
+  const slotId=previous?.source.slotId??restore?.id??crypto.randomUUID();
+  if(remaining.some(e=>e.source.slotId===slotId))throw new Error('WORKSPACE_SLOT_LOADED: Nguồn này đã được mở.');
+  if(restore)compileReport(restore.config,next.columns,sourceTable(id));
+  const managed:ManagedSource={...next,id,slotId,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo};
   const table=sourceTable(id), {db,conn}=await connect(), path='report_import.csv';
   await conn.query('DROP TABLE IF EXISTS report_stage');
   try {
@@ -270,6 +276,13 @@ async function handle(req: Request):Promise<unknown>{
       sources.delete(item.source.id);
       if(activeId===item.source.id)activeId=sources.keys().next().value??null;
       releaseBooks();return workspace();
+    }
+    case 'restoreSource':{
+      const slot=validateSavedSource(req.input.slot);
+      if(Array.from(sources.values()).some(e=>e.source.slotId===slot.id))throw new Error('WORKSPACE_SLOT_LOADED: Nguồn này đã được mở.');
+      const book=readBook(req.input.name,req.input.bytes);
+      const only=sources.size===1?Array.from(sources.values())[0]:undefined;
+      return store(book,replacementSheet(slot.sheet,book.data.SheetNames),undefined,only?.source.demo?only:undefined,slot);
     }
     case 'replaceSource':{
       const item=entry(req.input.sourceId,req.input.revision);

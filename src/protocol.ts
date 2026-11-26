@@ -1,5 +1,6 @@
 import type { Config, Report } from './model';
 import type { Workspace } from './source-model';
+import type { SavedSource } from './workspace-model';
 type SourceVersion={sourceId:string;revision:number};
 export type Requests={
   demo:{input:null;output:Workspace};
@@ -9,6 +10,7 @@ export type Requests={
   renameSource:{input:{sourceId:string;alias:string};output:Workspace};
   removeSource:{input:{sourceId:string};output:Workspace};
   replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
+  restoreSource:{input:{slot:SavedSource;name:string;bytes:ArrayBuffer};output:Workspace};
   report:{input:SourceVersion&{config:Config;page:number};output:Report};
   export:{input:SourceVersion&{config:Config;format:'xlsx'|'csv'};output:{bytes:ArrayBuffer;name:string;mime:string}};
 };

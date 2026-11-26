@@ -105,8 +105,8 @@ export default function UserCenter({ state, config, onSave, onReset, accountEmai
           </>}
           {tab === 'privacy' && <>
             <h3>Dữ liệu & quyền riêng tư</h3><p className="user-description">Bạn kiểm soát dữ liệu trên thiết bị của mình.</p>
-            <div className="user-facts"><div><strong>Workbook và kết quả</strong><span>Chỉ tồn tại trong bộ nhớ phiên làm việc.</span></div><div><strong>Hồ sơ và mẫu đã lưu</strong><span>Lưu riêng trên Cloudflare D1 và đồng bộ khi đăng nhập.</span></div><div><strong>Đăng nhập và phân quyền</strong><span>Đăng nhập Google bắt buộc; API xác định quyền sở hữu từ session.</span></div></div>
-            <div className="user-danger"><strong>Đặt lại không gian cá nhân</strong><p>Đặt lại thiết lập, mẫu và cấu hình đã lưu của tài khoản. Không xóa file Excel gốc hoặc file đã tải về; báo cáo đang mở không bị xóa.</p>
+            <div className="user-facts"><div><strong>Workbook và kết quả</strong><span>Chỉ tồn tại trong bộ nhớ phiên làm việc.</span></div><div><strong>Hồ sơ, mẫu và workspace đã lưu</strong><span>Lưu riêng trên Cloudflare D1 và đồng bộ khi đăng nhập.</span></div><div><strong>Đăng nhập và phân quyền</strong><span>Đăng nhập Google bắt buộc; API xác định quyền sở hữu từ session.</span></div></div>
+            <div className="user-danger"><strong>Đặt lại không gian cá nhân</strong><p>Đặt lại thiết lập, mẫu, cấu hình gần nhất và workspace đã lưu của tài khoản. Không xóa file Excel gốc hoặc file đã tải về; báo cáo đang mở không bị xóa.</p>
               {confirmReset ? <div className="user-form-actions"><button type="button" className="button danger-button" onClick={() => void act(async () => { await onReset(); setDraft({ displayName: data.profile.displayName, workspace: 'Workspace cá nhân', density: 'comfortable' }); setConfirmReset(false); }, 'Đã đặt lại hồ sơ và mẫu.')}>Xác nhận xóa</button><button type="button" className="button" onClick={() => setConfirmReset(false)}>Hủy</button></div> :
               <button type="button" className="button danger-button" onClick={() => { setConfirmReset(true); setFeedback(''); }}>Đặt lại hồ sơ và mẫu</button>}
             </div>

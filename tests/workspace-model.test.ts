@@ -1,0 +1,46 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { validateWorkspace, snapshotWorkspace, withoutSavedSource } from '../src/workspace-model.ts';
+import { defaultSettings, validateSettings, parseSettings } from '../src/account-model.ts';
+import { defaultConfig } from '../src/model.ts';
+import type { Column } from '../src/model.ts';
+import type { ManagedSource } from '../src/source-model.ts';
+import type { SavedSource } from '../src/workspace-model.ts';
+const columns:Column[]=[{id:'c0',name:'Region',kind:'text'},{id:'c1',name:'Amount',kind:'number'}];
+const makeSlot=(alias:string):SavedSource=>({id:crypto.randomUUID(),alias,sheet:'Sales',columns:columns.map(({name,kind})=>({name,kind})),config:{...defaultConfig(columns),title:'Report '+alias}});
+const runtime=(s:SavedSource,id:string,demo=false):ManagedSource=>({id,slotId:s.id,alias:s.alias,bookId:'b1',revision:1,demo,name:'file.xlsx',sheet:s.sheet,sheets:[s.sheet],rows:3,columns});
+test('old settings migrate to workspace null and saved slots contain metadata only',()=>{
+  const {workspace,...legacy}=defaultSettings();
+  assert.equal(validateSettings(legacy).workspace,null);
+  const slot=makeSlot('Sales');
+  const value=validateSettings({...legacy,workspace:{version:1,slots:[{...slot,rawRows:[['SECRET_ROW']],bytes:'SECRET_FILE',columns:[{...slot.columns[0],sample:'SECRET_SAMPLE'},slot.columns[1]]}]}});
+  assert.deepEqual(value.workspace?.slots,[slot]);
+  const json=JSON.stringify(value);
+  assert.ok(!json.includes('SECRET'));
+  assert.deepEqual(parseSettings(json),value);
+});
+test('workspace schema rejects duplicates, malformed ids, invalid types, and invalid reports',()=>{
+  const slot=makeSlot('Sales'), wrap=(slots:unknown[])=>({version:1,slots});
+  assert.throws(()=>validateWorkspace({version:2,slots:[slot]}));
+  assert.throws(()=>validateWorkspace(wrap([])));
+  assert.throws(()=>validateWorkspace(wrap([slot,slot])));
+  assert.throws(()=>validateWorkspace(wrap([slot,makeSlot('sales')])));
+  assert.throws(()=>validateWorkspace(wrap([{...slot,id:'bad'}])));
+  assert.throws(()=>validateWorkspace(wrap([{...slot,columns:[slot.columns[0],slot.columns[0]]}])));
+  assert.throws(()=>validateWorkspace(wrap([{...slot,columns:[{name:'Region',kind:'unknown'}]}])));
+  assert.throws(()=>validateWorkspace(wrap([{...slot,config:{...slot.config,metric:'Missing'}}])));
+  assert.throws(()=>validateWorkspace(wrap(Array.from({length:13},(_,i)=>makeSlot('S'+i)))));
+});
+test('snapshot preserves unopened slots, excludes demo, and updates loaded slot by stable ID',()=>{
+  const a=makeSlot('A'),b=makeSlot('B'),demo=makeSlot('Demo');
+  const original=validateWorkspace({version:1,slots:[a,b]})!;
+  const updated=snapshotWorkspace(original,[runtime(a,'s1'),runtime(demo,'s2',true)],()=>({...a.config,title:'New A'}));
+  assert.equal(updated.slots.length,2);
+  assert.deepEqual(updated.slots.find(s=>s.id===b.id),b);
+  assert.equal(updated.slots.find(s=>s.id===a.id)?.config.title,'New A');
+  assert.ok(!updated.slots.some(s=>s.id===demo.id));
+  assert.throws(()=>snapshotWorkspace(original,[runtime(a,'s1')],()=>undefined));
+  assert.throws(()=>snapshotWorkspace(original,[runtime(demo,'s2',true)],()=>demo.config));
+  assert.deepEqual(withoutSavedSource(updated,a.id),{version:1,slots:[b]});
+  assert.equal(withoutSavedSource({version:1,slots:[a]},a.id),null);
+});

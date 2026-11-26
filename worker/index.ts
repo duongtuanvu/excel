@@ -1,6 +1,7 @@
 import type { Env } from './db.ts';
 import { finishLogin, session, startLogin } from './auth.ts';
 import { ACCOUNT_MAX_BYTES, parseSettings, validRevision, validateSettings } from '../src/account-model.ts';
+import type { AccountSettings } from '../src/account-model.ts';
 import { cookie, json, now, readJson, redirect, sameOriginWrite, SESSION_COOKIE, trustedOrigin } from './security.ts';
 
 const unauthorized = () => json({ code: 'AUTH_SESSION_REQUIRED', error: 'Phiên đăng nhập đã hết hạn.' }, 401);
@@ -26,13 +27,22 @@ async function api(request: Request, env: Env): Promise<Response> {
     return json({ ok: true }, 200, [cookie(SESSION_COOKIE, '', 0)]);
   }
   if (path === '/api/settings' && method === 'PUT') {
-    let payload: string, revision: number;
+    let settings: AccountSettings, revision: number, legacyWrite: boolean;
     try {
       const input = await readJson(request, ACCOUNT_MAX_BYTES + 1024) as Record<string, unknown>;
       if (!input || !validRevision(input.revision)) throw new Error('Revision không hợp lệ.');
       revision = input.revision;
-      payload = JSON.stringify(validateSettings(input.settings));
+      settings = validateSettings(input.settings);
+      legacyWrite = !Object.hasOwn(input.settings as object, 'workspace');
     } catch { return json({ code: 'SETTINGS_INVALID', error: 'Cấu hình hoặc dung lượng dữ liệu không hợp lệ.' }, 400); }
+    // Older clients do not know workspace. Keep the stored workspace on legacy writes.
+    if (legacyWrite) {
+      const current = await env.DB.prepare('SELECT payload FROM user_settings WHERE user_id=? AND revision=?').bind(active.id, revision).first<{payload:string}>();
+      if (!current) return json({code:'SETTINGS_CONFLICT',error:'Cấu hình đã thay đổi. Hãy tải lại từ tài khoản.'},409);
+      try { settings = validateSettings({...settings,workspace:parseSettings(current.payload).workspace}); }
+      catch { return json({code:'SETTINGS_INVALID',error:'Cấu hình vượt giới hạn. Hãy tải lại ứng dụng.'},400); }
+    }
+    const payload = JSON.stringify(settings);
     // Compare-and-swap: reject concurrent saves. Recheck session within the write statement.
     const result = await env.DB.prepare('UPDATE user_settings SET payload=?,revision=revision+1,updated_at=? WHERE user_id=? AND revision=? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?) RETURNING revision').bind(payload, now(), active.id, revision, active.tokenHash, active.id, now()).first<{ revision: number }>();
     if (!result) {

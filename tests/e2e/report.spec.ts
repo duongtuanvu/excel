@@ -1,7 +1,8 @@
 import { expect, test } from './account-fixture';
 import * as XLSX from 'xlsx';
+import { readFileSync } from 'node:fs';
 
-test('demo, import, filter, template, workbook export', async ({ page }) => {
+test('demo, import, filter, template, workbook export', async ({ page }, testInfo) => {
   await page.goto('/');
   await expect(page.getByTestId('filtered-count')).toHaveText('180');
   const wb = XLSX.utils.book_new();
@@ -19,9 +20,9 @@ test('demo, import, filter, template, workbook export', async ({ page }) => {
   await page.getByRole('button',{name:'Xuất Excel'}).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
-  const path = await download.path();
-  expect(path).not.toBeNull();
-  const exported = XLSX.readFile(path!);
+  const path = testInfo.outputPath('exported.xlsx');
+  await download.saveAs(path);
+  const exported = XLSX.read(readFileSync(path),{type:'buffer'});
   expect(exported.SheetNames).toEqual(['Tổng quan','Tổng hợp','Dữ liệu đã lọc']);
   const rows = XLSX.utils.sheet_to_json(exported.Sheets['Tổng hợp'],{header:1});
   expect(rows).toContainEqual(['North',5,2]);

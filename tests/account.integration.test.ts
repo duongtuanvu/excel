@@ -112,3 +112,26 @@ test('OAuth start binds state to browser, callback consumes it once; mocked prov
     assert.equal(f.db.prepare('SELECT COUNT(*) n FROM users').get()?.n,1);
   }finally{globalThis.fetch=originalFetch;f.close();}
 });
+
+test('workspace persists per account, legacy profile saves preserve it, and explicit reset clears it',async()=>{
+  const f=fixture();
+  try{
+    const a=await f.user('a'),b=await f.user('b');
+    const settings=defaultSettings('A');
+    const slot={id:crypto.randomUUID(),alias:'Private A',sheet:'Sales',columns:[{name:'Region',kind:'text' as const},{name:'Amount',kind:'number' as const}],config:{title:'Report A',groups:['Region'],metric:'Amount',aggregate:'sum' as const,filters:[],chart:'bar' as const,sort:'desc' as const}};
+    settings.workspace={version:1,slots:[slot]};
+    assert.equal((await f.save(a,'a',0,{...settings,workspace:{version:1,slots:[{...slot,rows:['SECRET_ROW']}]}})).status,200);
+    const get=async(cookie:string)=>(await (await f.request('/api/session',{headers:{Cookie:cookie}})).json());
+    assert.deepEqual((await get(a)).settings.workspace,settings.workspace);
+    assert.equal((await get(b)).settings.workspace,null);
+    assert.equal((await f.save(b,'a',0,settings)).status,409);
+    const {workspace,...legacy}=defaultSettings('New profile A');
+    assert.equal((await f.save(a,'a',1,legacy)).status,200);
+    assert.deepEqual((await get(a)).settings.workspace,settings.workspace);
+    assert.equal((await get(a)).settings.profile.displayName,'New profile A');
+    assert.equal((await f.save(a,'a',1,defaultSettings('Stale reset'))).status,409);
+    assert.equal((await f.save(a,'a',2,{...settings,workspace:{version:1,slots:[slot,slot]}})).status,400);
+    assert.equal((await f.save(a,'a',2,defaultSettings('A'))).status,200);
+    assert.equal((await get(a)).settings.workspace,null);
+  }finally{f.close();}
+});
