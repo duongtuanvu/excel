@@ -27,7 +27,13 @@ const authMessages: Record<string,string> = {
   google_temporarily_unavailable: 'Dịch vụ Google tạm thời không khả dụng. [google_temporarily_unavailable]',
   google_server_error: 'Google gặp lỗi máy chủ. [google_server_error]',
   google_authorization_failed: 'Google không hoàn tất cấp quyền. [google_authorization_failed]',
-  google_token_failed: 'Không thể đổi mã xác thực lấy token Google. [google_token_failed]',
+  google_token_failed: 'Google từ chối yêu cầu token hoặc phản hồi không hợp lệ. [google_token_failed]',
+  google_token_network: 'Worker không kết nối được endpoint token Google. [google_token_network]',
+  google_token_timeout: 'Google token endpoint quá thời gian phản hồi. [google_token_timeout]',
+  google_token_redirect: 'Google token endpoint trả redirect không mong đợi. [google_token_redirect]',
+  google_userinfo_network: 'Worker không kết nối được Google UserInfo. [google_userinfo_network]',
+  google_userinfo_timeout: 'Google UserInfo quá thời gian phản hồi. [google_userinfo_timeout]',
+  google_userinfo_redirect: 'Google UserInfo trả redirect không mong đợi. [google_userinfo_redirect]',
   google_token_invalid: 'Phản hồi token Google không hợp lệ. [google_token_invalid]',
   google_userinfo_failed: 'Không lấy được thông tin tài khoản từ Google. [google_userinfo_failed]',
   google_identity_invalid: 'Thông tin định danh hoặc email xác minh không hợp lệ. [google_identity_invalid]',
@@ -35,8 +41,10 @@ const authMessages: Record<string,string> = {
   session_storage_failed: 'Không thể lưu cấu hình mặc định hoặc phiên đăng nhập trong D1. [session_storage_failed]',
 };
 function initialMessage() {
-  const key = new URLSearchParams(location.search).get('auth');
-  return key && Object.hasOwn(authMessages, key) ? authMessages[key] : '';
+  const params = new URLSearchParams(location.search);
+  const key = params.get('auth'), status = params.get('http');
+  if (!key || !Object.hasOwn(authMessages, key)) return '';
+  return authMessages[key] + (status && /^[1-5][0-9]{2}$/.test(status) ? ' (HTTP ' + status + ')' : '');
 }
 function LoginScreen({ gate, retry }: { gate: Exclude<Gate, {type:'ready'}>; retry: () => void }) {
   return <main className="auth-layout">

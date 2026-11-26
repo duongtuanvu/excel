@@ -1,5 +1,6 @@
 import type { Env } from './db';
 import { credentials, providerCode, tokenFailure } from './auth-diagnostics';
+import { googleFetch, isRedirectStatus, networkFailure } from './google-fetch';
 import { defaultSettings } from '../src/account-model';
 import { cookie, getCookie, hash, isToken, now, OAUTH_COOKIE, OAUTH_SECONDS, randomToken, redirect, SESSION_COOKIE, SESSION_SECONDS } from './security';
 
@@ -10,7 +11,9 @@ type Stage = 'start' | 'callback' | 'state' | 'token' | 'userinfo' | 'account' |
 function fail(reason: string, stage: Stage, status?: number) {
   // Only controlled reason values and numeric status. No exception text or PII.
   console.warn(JSON.stringify({event:'oauth_failed',stage,reason,...(status === undefined ? {} : {status})}));
-  return redirect('/?auth=' + encodeURIComponent(reason), [clearOAuth()]);
+  const params = new URLSearchParams({auth:reason});
+  if (Number.isInteger(status) && status! >= 100 && status! <= 599) params.set('http', String(status));
+  return redirect('/?' + params.toString(), [clearOAuth()]);
 }
 function config(env: Env) {
   if (!env.DB || !env.APP_ORIGIN || !env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null;
@@ -75,25 +78,31 @@ export async function finishLogin(request: Request, env: Env): Promise<Response>
   const code = url.searchParams.get('code');
   if (!code || code.length > 4096 || url.searchParams.getAll('code').length !== 1) return fail('oauth_code_missing', 'callback');
   stage = 'token';
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code, code_verifier: attempt.verifier, grant_type: 'authorization_code', redirect_uri: env.APP_ORIGIN + '/api/auth/callback' }),
-  });
+  let tokenResponse: Response;
+  try {
+    tokenResponse = await googleFetch('token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code, code_verifier: attempt.verifier, grant_type: 'authorization_code', redirect_uri: env.APP_ORIGIN + '/api/auth/callback' }).toString(),
+    });
+  } catch (error) { return fail('google_token_' + networkFailure(error), 'token'); }
+  if (isRedirectStatus(tokenResponse.status)) return fail('google_token_redirect', 'token', tokenResponse.status);
   if (!tokenResponse.ok) {
     let reason = 'google_token_failed';
     try { const error = await tokenResponse.json() as {error?:unknown}; reason = tokenFailure(error?.error); } catch { /* response may not be JSON */ }
     return fail(reason, 'token', tokenResponse.status);
   }
-  const tokens = await tokenResponse.json() as { access_token?: unknown; token_type?: unknown };
-  if (typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > 8192 || String(tokens.token_type).toLowerCase() !== 'bearer') return fail('google_token_invalid', 'token');
+  let tokens: { access_token?: unknown; token_type?: unknown };
+  try { tokens = await tokenResponse.json() as typeof tokens; } catch { return fail('google_token_invalid', 'token', tokenResponse.status); }
+  if (!tokens || typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > 8192 || String(tokens.token_type).toLowerCase() !== 'bearer') return fail('google_token_invalid', 'token');
   stage = 'userinfo';
   // Obtain verified OIDC identity directly from Google's HTTPS UserInfo endpoint.
   // Do not trust a client-supplied or merely decoded ID token; no Google tokens are persisted.
-  const userResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-    redirect: 'error', signal: AbortSignal.timeout(15_000),
-    headers: { Authorization: 'Bearer ' + tokens.access_token },
-  });
+  let userResponse: Response;
+  try {
+    userResponse = await googleFetch('userinfo', { headers: { Authorization: 'Bearer ' + tokens.access_token, Accept: 'application/json' } });
+  } catch (error) { return fail('google_userinfo_' + networkFailure(error), 'userinfo'); }
+  if (isRedirectStatus(userResponse.status)) return fail('google_userinfo_redirect', 'userinfo', userResponse.status);
   if (!userResponse.ok) return fail('google_userinfo_failed', 'userinfo', userResponse.status);
   let google: GoogleIdentity;
   try { google = identity(await userResponse.json()); } catch { return fail('google_identity_invalid', 'userinfo'); }

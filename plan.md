@@ -340,3 +340,6 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 
 - [x] Source chuẩn hóa/kiểm tra OAuth credentials, phân loại lỗi Google/D1 theo stage và log mã lỗi cố định không chứa bí mật.
 - [ ] Xác minh nguyên nhân lỗi login trên production và chạy lại flow Google thành công; chưa coi tính năng auth đã nghiệm thu.
+
+- [x] Sửa tương thích workerd: outbound Google fetch dùng manual, không follow redirect, phân loại network/timeout/HTTP và thêm source regression test.
+- [ ] Chạy test regression trên runtime phù hợp; xác nhận Google login production thành công sau deploy.
