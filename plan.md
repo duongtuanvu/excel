@@ -322,7 +322,7 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** CI and release v0.6.0 Data Model, then Visual Transformation Pipeline, persistent definitions and dependency rebuild.
+**Next action:** CI and release v0.6.1 linear transformation pipeline; then persistent DAG/model definitions and dependency rebuild before advanced pivot.
 
 **Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
@@ -437,7 +437,16 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source two raw tables, four JOIN types, up to three composite keys, exact cardinality and unmatched counts, duplicate warnings and explicit expansion confirmation.
 - [x] Source UNION/UNION ALL explicit column mapping, matching kinds, output caps; readonly materialized table available in report/export/profile.
 - [x] Source dependency revision invalidation; stale tables cannot query or export; derived snapshots excluded from workspace persistence and batch refresh.
-- [ ] CI/auto merge v0.6.0 and production smoke test.
+- [x] CI v0.6.0 run 45776825577: 40 unit/integration + 16 E2E pass; release main 0fe4de9 verified.
+- [ ] Production smoke test.
 - [ ] Persistent model definitions, multi-step DAG, automatic rebuild, relation diagram and primary-key management. No implicit type coercion, no arbitrary SQL, no chained derived sources yet. Delete stale tables to release memory.
 
 - [x] CI v0.6.0 run 45776337901: unit/integration and build passed, 14/16 E2E passed. Both new model tests failed before executing JOIN/UNION because three ModelPanel instances were visible. Source shows sibling ModelPanel/BatchPanel had identical React keys for raw-only source lists. Namespace sibling keys and encode source identity tuples with JSON.stringify to prevent key collisions, including aliases containing delimiters. Added regression requiring exactly one model and batch panel before use and after materialization/replacement; preserved all original JOIN/UNION value assertions; surface preview runtime errors immediately. CI and release still pending.
+
+### Visual Transformation Pipeline v0.6.1
+- [x] Source 8 allow-listed transforms: trim, literal replace, rename, drop, filter, fill text blanks, strict cast, full-row distinct. Up to 16 ordered steps, enable/disable/reorder/delete, bounded undo/redo.
+- [x] Source bounded per-step preview and staged local execution, all-or-nothing output materialization; recursive dependency invalidation from raw and JOIN/UNION sources.
+- [x] Source versioned account-level recipes (up to 12), CAS/old-client protection, no D1 migration; no cell samples persisted.
+- [ ] CI, release and production smoke test. Not yet a multi-branch DAG. No sort/split/merge/group/unpivot, automatic rebuild or persistent JOIN recipe. Reapply saved recipes manually to compatible source; outputs remain session-only.
+
+- [x] Add four pipeline compiler/dependency unit tests, account isolation/upgrade integration test and two Chromium E2E scenarios (strict cast failure, ordering, preview, undo/redo, persistence and stale result). Release gate pending.

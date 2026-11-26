@@ -136,6 +136,24 @@ test('workspace persists per account, legacy profile saves preserve it, and expl
   }finally{f.close();}
 });
 
+test('a saved period report survives reload and older clients cannot discard its definition',async()=>{
+  const f=fixture();
+  try{
+    const cookie=await f.user('owner'),settings=defaultSettings('Report owner');
+    const slot={id:crypto.randomUUID(),alias:'Orders',sheet:'Data',columns:[{name:'Qty',kind:'number' as const}],
+      config:{title:'Qty',groups:[],metric:'Qty',aggregate:'sum' as const,filters:[],chart:'bar' as const,sort:'desc' as const}};
+    const other={...slot,id:crypto.randomUUID(),alias:'Orders B'},id=crypto.randomUUID();
+    settings.workspace={version:1,slots:[slot,other],outputId:id,models:[{id,alias:'All orders',config:slot.config,
+      operation:'union-all',leftSlotId:slot.id,rightSlotId:other.id,leftColumns:['Qty'],rightColumns:['Qty'],pairs:[{left:'Qty',right:'Qty'}]}]};
+    const headers={Cookie:cookie,Origin:origin,'Content-Type':'application/json','X-KySheet-User':'owner','X-KySheet-Period':'1'};
+    assert.equal((await f.request('/api/settings',{method:'PUT',headers,body:JSON.stringify({revision:0,settings})})).status,200);
+    const old=await f.save(cookie,'owner',1,defaultSettings());
+    assert.equal(old.status,409);assert.equal((await old.json()).code,'SETTINGS_CLIENT_UPGRADE');
+    const stored=await (await f.request('/api/session',{headers:{Cookie:cookie}})).json();
+    assert.deepEqual(stored.settings.workspace,settings.workspace);
+  }finally{f.close();}
+});
+
 test('schema-capable clients save rules; old clients cannot erase them',async()=>{
  const f=fixture();try{
  const a=await f.user('a'),settings=defaultSettings('A');
@@ -145,5 +163,23 @@ test('schema-capable clients save rules; old clients cannot erase them',async()=
  const denied=await save(1,defaultSettings('Old'),false);assert.equal(denied.status,409);assert.equal((await denied.json()).code,'SETTINGS_CLIENT_UPGRADE');
  const loaded=await (await f.request('/api/session',{headers:{Cookie:a}})).json();assert.deepEqual(loaded.settings.workspace,settings.workspace);
  assert.equal((await save(1,defaultSettings('Reset'),true)).status,200);
+ }finally{f.close();}
+});
+
+
+test('pipeline recipes stay isolated and old clients cannot erase them',async()=>{
+ const f=fixture();try{
+ const a=await f.user('a'),b=await f.user('b'),settings=defaultSettings('A');
+ settings.pipelines=[{version:1,name:'Clean',steps:[{type:'trim',enabled:true,column:'Region',value:'',replacement:'',operator:'eq',target:'text'}]}];
+ const put=(revision:number,value:unknown,capable:boolean)=>f.request('/api/settings',{method:'PUT',headers:{Cookie:a,Origin:origin,'Content-Type':'application/json','X-KySheet-User':'a',...(capable?{'X-KySheet-Pipeline':'1'}:{})},body:JSON.stringify({revision,settings:value})});
+ const get=async(cookie:string)=>(await (await f.request('/api/session',{headers:{Cookie:cookie}})).json()).settings;
+ assert.equal((await put(0,{...settings,pipelines:[{...settings.pipelines[0],sample:['SECRET']}]},true)).status,200);
+ assert.deepEqual((await get(a)).pipelines,settings.pipelines);
+ assert.equal((await get(b)).pipelines,undefined);
+ const denied=await put(1,defaultSettings('Old'),false);
+ assert.equal(denied.status,409);assert.equal((await denied.json()).code,'SETTINGS_CLIENT_UPGRADE');
+ assert.deepEqual((await get(a)).pipelines,settings.pipelines);
+ assert.equal((await put(1,defaultSettings('Reset'),true)).status,200);
+ assert.equal((await get(a)).pipelines,undefined);
  }finally{f.close();}
 });

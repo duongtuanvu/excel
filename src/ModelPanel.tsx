@@ -5,7 +5,7 @@ import type {ModelOperation,ModelInput,ModelPair,ModelPreview} from './data-mode
 type Props={sources:ManagedSource[];disabled:boolean;onRequest:(input:ModelInput,apply?:boolean,confirmExpansion?:boolean)=>Promise<ModelPreview|null>};
 const fmt=new Intl.NumberFormat('vi-VN');
 export default function ModelPanel({sources,disabled,onRequest}:Props){
- const real=sources.filter(s=>!s.demo&&!s.derived);
+ const real=sources.filter(s=>!s.demo&&!s.stale);
  const [open,setOpen]=useState(false),[leftId,setLeft]=useState(real[0]?.id??''),[rightId,setRight]=useState(real[1]?.id??''),[operation,setOperation]=useState<ModelOperation>('left'),[alias,setAlias]=useState('Bảng ghép'),[pairs,setPairs]=useState<ModelPair[]>(()=>real.length>=2?defaultPairs(real[0],real[1],'left'):[]),[preview,setPreview]=useState<ModelPreview|null>(null),[confirm,setConfirm]=useState(false),[pending,setPending]=useState(false),[error,setError]=useState('');
  const running=useRef(false),locked=disabled||pending;
  const left=real.find(s=>s.id===leftId),right=real.find(s=>s.id===rightId),union=isUnion(operation);
@@ -39,5 +39,5 @@ export default function ModelPanel({sources,disabled,onRequest}:Props){
  {stats?<><div className="profile-stats">{[{label:'Quan hệ',value:stats.cardinality},{label:'Cặp khớp',value:fmt.format(stats.matchedPairs)},{label:'Trái không khớp',value:fmt.format(stats.unmatchedLeft)},{label:'Phải không khớp',value:fmt.format(stats.unmatchedRight)}].map(x=><div className="profile-stat" key={x.label}><span>{x.label}</span><strong>{x.value}</strong></div>)}</div><p className="profile-note">Nhóm khóa trùng: trái {stats.leftDuplicateKeys}, phải {stats.rightDuplicateKeys}, trùng cả hai {stats.manyToManyKeys}. Quan hệ tổng thể tính trên các khóa khớp.</p>{stats.expansion&&<label className="model-warning"><input type="checkbox" checked={confirm} disabled={locked} onChange={e=>setConfirm(e.target.checked)}/> Tôi hiểu JOIN có thể nhân bản dòng và làm tăng tổng tiền; xác nhận tạo bảng.</label>}</>:<p className="profile-note">Số dòng trùng đã loại: {fmt.format(preview.removedDuplicates??0)}</p>}
  <p className="profile-note">Cột kết quả: {preview.columns.map(c=>c.name).join(' · ')}</p></div>}
  <div className="schema-actions"><button type="button" className="button" disabled={locked||!valid} onClick={()=>void run(false)}>Kiểm tra mô hình</button><button type="button" className="button primary" disabled={locked||!valid||!preview||!!preview.stats?.expansion&&!confirm} onClick={()=>void run(true)}>Tạo bảng kết quả</button></div>
- <p className="profile-note">Bảng kết quả chỉ đọc trong phiên, không lưu vào workspace tài khoản; dùng Report Engine và xuất Excel như nguồn thường. Thay hoặc xóa nguồn gốc sẽ làm bảng ghép hết hiệu lực. Tạo lại bảng khi cần.</p></div>}</section>;
+ <p className="profile-note">Bạn có thể dùng bảng kết quả ở bước ghép tiếp theo. Chọn Lưu workspace để dùng lại các bước ghép và cấu hình báo cáo khi chạy kỳ mới.</p></div>}</section>;
 }

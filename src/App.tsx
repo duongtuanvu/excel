@@ -9,13 +9,17 @@ import SchemaPanel from './SchemaPanel';
 import ImportPanel from './ImportPanel';
 import BatchPanel from './BatchPanel';
 import ModelPanel from './ModelPanel';
+import PipelinePanel from './PipelinePanel';
+import type {PipelineInput,PipelinePreview,PipelineRecipe} from './pipeline-model';
+import {validateRecipes} from './pipeline-model';
 import type {ModelInput,ModelPreview} from './data-model';
 import type { BatchSelection, BatchPreview } from './batch-model';
 import { BATCH_LIMITS } from './batch-model';
 import type { ImportLayout, ColumnMapping } from './import-model';
 import type { SchemaRule, SchemaPreview } from './schema-model';
 import type { Distribution, SourceProfile } from './profile-model';
-import { snapshotWorkspace, withoutSavedSource } from './workspace-model';
+import { periodPlan, snapshotWorkspace, withoutSavedSource } from './workspace-model';
+import type { RunPeriod } from './PeriodPanel';
 import type { SavedSource } from './workspace-model';
 import type { ManagedSource, Workspace } from './source-model';
 import { initials } from './user-model';
@@ -191,6 +195,21 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     return runProfile(e=>e.request('distribution',{sourceId:target.id,revision:target.revision,columnId}));
   }
 
+  async function pipelineRequest(input:PipelineInput,apply=false):Promise<PipelinePreview|null>{
+    return runProfile(async e=>{
+      if(!apply)return e.request('previewPipeline',input);
+      const ws=await e.request('createPipeline',input);
+      applyWorkspace(ws,undefined,defaultConfig(ws.active?.columns??[]));
+      setNotice('Đã tạo bảng pipeline '+input.alias+'.');
+      return null;
+    });
+  }
+  async function savePipelineRecipes(recipes:PipelineRecipe[]){
+    if(busyRef.current||saving||accountBusy)throw new Error('PIPELINE_BUSY: Bộ xử lý đang bận.');
+    busyRef.current=true;setAccountBusy(true);setError('');setNotice('');
+    try{await saveSettings({...session.settings,pipelines:validateRecipes(recipes)});setNotice('Đã lưu công thức pipeline vào tài khoản.');}
+    finally{busyRef.current=false;setAccountBusy(false);}
+  }
   async function modelRequest(input:ModelInput,apply=false,confirmExpansion=false):Promise<ModelPreview|null>{
     return runProfile(async e=>{
       if(!apply)return e.request('previewModel',input);
@@ -315,10 +334,29 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   }
   function saveWorkspace() {
     void accountAction(async()=>{
-      const workspace=snapshotWorkspace(session.settings.workspace,sources,s=>s.id===source?.id?config:sourceConfigs.current.get(s.id));
+      const workspace=snapshotWorkspace(session.settings.workspace,sources,s=>s.id===source?.id?config:sourceConfigs.current.get(s.id),source&&!source.demo?source.slotId:undefined);
       await saveSettings({...session.settings,workspace});
     },'Đã lưu workspace vào tài khoản.');
   }
+  const runPeriod:RunPeriod=async(outputId,selection,confirmed)=>{
+    const saved=session.settings.workspace;
+    if(!saved)throw new Error('Hãy lưu workspace trước khi chạy kỳ mới.');
+    const plan=periodPlan(saved,outputId);
+    return runProfile(async engine=>{
+      const files=[];
+      for(const item of selection)files.push({slotId:item.slotId,name:item.file.name,bytes:await item.file.arrayBuffer()});
+      const result=await engine.request('runPeriod',{saved,outputId,files,confirmed},files.map(f=>f.bytes));
+      if(result.status==='confirm')return result.warning;
+      applyWorkspace(result.workspace,undefined,plan.output.config);
+      const configs=new Map([...plan.slots,...plan.models].map(s=>[s.id,s.config]));
+      for(const item of result.workspace.sources){
+        const restoredConfig=configs.get(item.slotId);
+        if(restoredConfig)sourceConfigs.current.set(item.id,restoredConfig);
+      }
+      restored.current=true;setError('');setNotice('Đã chạy kỳ mới cho '+plan.output.alias+' từ '+files.length+' nguồn.');
+      return null;
+    });
+  };
   function forgetSavedSource(id:string) {
     void accountAction(async()=>{
       const workspace=session.settings.workspace;
@@ -368,7 +406,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.6.0</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.6.1</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -411,7 +449,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         </Panel>
         <Panel title="Workspace tài khoản" icon="layers">
           <SavedWorkspacePanel saved={session.settings.workspace} sources={sources} disabled={locked}
-            onSave={saveWorkspace} onAttach={attachSavedSource} onForget={forgetSavedSource}
+            onSave={saveWorkspace} onAttach={attachSavedSource} onForget={forgetSavedSource} onRunPeriod={runPeriod}
             onActivate={id=>void sourceAction('Đang chuyển nguồn…',e=>e.request('activateSource',{sourceId:id}))}/>
         </Panel>
         <fieldset className="settings" disabled={locked || !source}>
@@ -467,7 +505,8 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <section className="report-card chart-card"><div className="card-heading"><div><h2>Phân tích theo nhóm</h2><p>{label} · {aggregateLabel} · tối đa 12 nhóm đầu</p></div><div className="segmented" aria-label="Kiểu biểu đồ"><button className={config.chart === 'horizontal' ? 'active' : ''} aria-pressed={config.chart === 'horizontal'} disabled={locked} onClick={() => patch({chart:'horizontal'})}>Thanh</button><button className={config.chart === 'bar' ? 'active' : ''} aria-pressed={config.chart === 'bar'} disabled={locked} onClick={() => patch({chart:'bar'})}>Cột</button></div></div>
           {result ? <Chart groups={groups} mode={config.chart}/> : <div className="empty">{loading || busy ? <><span className="spinner"/> Đang tính báo cáo…</> : 'Chưa có kết quả.'}</div>}
         </section>
-        <ModelPanel key={'model:'+JSON.stringify(sources.filter(s=>!s.demo&&!s.derived).map(s=>[s.id,s.revision,s.alias]))} sources={sources} disabled={locked} onRequest={modelRequest}/>
+        <PipelinePanel key={'pipeline:'+JSON.stringify(sources.filter(s=>!s.demo&&!s.stale&&s.derived?.operation!=='pipeline').map(s=>[s.id,s.revision,s.alias]))} sources={sources} activeId={source?.id??null} recipes={session.settings.pipelines??[]} disabled={locked} onRequest={pipelineRequest} onSave={savePipelineRecipes}/>
+        <ModelPanel key={'model:'+JSON.stringify(sources.filter(s=>!s.demo&&!s.stale).map(s=>[s.id,s.revision,s.alias]))} sources={sources} disabled={locked} onRequest={modelRequest}/>
         <BatchPanel key={'batch:'+JSON.stringify(sources.map(s=>[s.id,s.revision,s.alias]))} sources={sources} disabled={locked} onRequest={batchRequest}/>
         {source&&!source.derived&&<ImportPanel key={'import:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewLayout} onApply={applyLayout} onReplacement={replacementRequest}/>}
         {source&&!source.derived&&<SchemaPanel key={'schema:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewSchema} onApply={applySchema}/>}

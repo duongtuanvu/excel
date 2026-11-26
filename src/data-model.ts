@@ -2,25 +2,55 @@ import {LIMITS,normalizeHeaders} from './model.ts';
 import type {Column} from './model.ts';
 import {normalizeAlias,sourceTable} from './source-model.ts';
 import type {ManagedSource} from './source-model.ts';
+import type {PipelineRecipe} from './pipeline-model.ts';
 
 export const MODEL_OPERATIONS=['inner','left','right','full','union','union-all'] as const;
 export type ModelOperation=typeof MODEL_OPERATIONS[number];
 export type ModelPair={left:string;right:string};
 export type ModelInput={leftId:string;leftRevision:number;rightId:string;rightRevision:number;operation:ModelOperation;alias:string;pairs:ModelPair[]};
-export type ModelOrigin={operation:ModelOperation;leftId:string;leftRevision:number;rightId:string;rightRevision:number};
+export type ModelRecipe = {leftSlotId:string; rightSlotId:string; operation:ModelOperation; pairs:ModelPair[]; leftColumns:string[]; rightColumns:string[]};
+type Dependencies = Pick<ModelInput,'leftId'|'leftRevision'|'rightId'|'rightRevision'>;
+export type TransformRecipe = {operation:'pipeline';leftSlotId:string;leftColumns:string[];recipe:PipelineRecipe};
+export type ModelOrigin = Dependencies & (ModelRecipe|TransformRecipe);
+export type ModelTable = Pick<ManagedSource,'id'|'slotId'|'revision'|'columns'|'demo'>;
 export type ModelStats={matchedPairs:number;matchedLeft:number;matchedRight:number;unmatchedLeft:number;unmatchedRight:number;leftDuplicateKeys:number;rightDuplicateKeys:number;manyToManyKeys:number;cardinality:'none'|'1:1'|'1:N'|'N:1'|'N:N';expansion:boolean};
 export type ModelPreview={rows:number;columns:Column[];chars:number;stats:ModelStats|null;removedDuplicates:number|null};
 export const MODEL_LABELS:Record<ModelOperation,string>={inner:'INNER JOIN',left:'LEFT JOIN',right:'RIGHT JOIN',full:'FULL OUTER JOIN',union:'UNION', 'union-all':'UNION ALL'};
 export const isUnion=(op:ModelOperation)=>op==='union'||op==='union-all';
-export function modelStale(origin:ModelOrigin,sources:readonly Pick<ManagedSource,'id'|'revision'>[]):boolean{
- return !sources.some(s=>s.id===origin.leftId&&s.revision===origin.leftRevision)||!sources.some(s=>s.id===origin.rightId&&s.revision===origin.rightRevision);
+export function modelStale(origin:Dependencies,sources:readonly (Pick<ManagedSource,'id'|'revision'>&Partial<Pick<ManagedSource,'derived'>>)[],path=new Set<string>()):boolean{
+ const check=(id:string,revision:number):boolean=>{
+   const s=sources.find(x=>x.id===id&&x.revision===revision);
+   if(!s||path.has(id))return true;
+   return !!s.derived&&modelStale(s.derived,sources,new Set([...path,id]));
+ };
+ return check(origin.leftId,origin.leftRevision)||check(origin.rightId,origin.rightRevision);
+}
+function matchColumn(columns:Column[],key:'id'|'name',value:string):Column{
+ const column=columns.find(c=>c[key]===value);
+ if(!column)throw new Error('MODEL_COLUMN_MISSING: Không tìm thấy cột '+value+'.');
+ return column;
+}
+export function modelOrigin(input:ModelInput,left:ModelTable,right:ModelTable):Dependencies & ModelRecipe{
+ return {leftId:left.id,leftRevision:left.revision,rightId:right.id,rightRevision:right.revision,
+   leftSlotId:left.slotId,rightSlotId:right.slotId,operation:input.operation,leftColumns:left.columns.map(c=>c.name),rightColumns:right.columns.map(c=>c.name),
+   pairs:input.pairs.map(pair=>({left:matchColumn(left.columns,'id',pair.left).name,right:matchColumn(right.columns,'id',pair.right).name}))};
+}
+export function projectColumns<T extends ModelTable>(source:T,names:string[]):T{
+ return {...source,columns:names.map(name=>matchColumn(source.columns,'name',name))};
+}
+export function bindRecipe<T extends ModelTable>(recipe:ModelRecipe,alias:string,leftSource:T,rightSource:T){
+ const left=projectColumns(leftSource,recipe.leftColumns),right=projectColumns(rightSource,recipe.rightColumns);
+ if(left.slotId!==recipe.leftSlotId||right.slotId!==recipe.rightSlotId)throw new Error('MODEL_SOURCE_INVALID: Sai nguồn của bước ghép.');
+ const input:ModelInput={leftId:left.id,leftRevision:left.revision,rightId:right.id,rightRevision:right.revision,operation:recipe.operation,alias,
+   pairs:recipe.pairs.map(pair=>({left:matchColumn(left.columns,'name',pair.left).id,right:matchColumn(right.columns,'name',pair.right).id}))};
+ return {input,left,right};
 }
 export function defaultPairs(left:ManagedSource,right:ManagedSource,operation:ModelOperation):ModelPair[]{
  if(isUnion(operation))return left.columns.map(c=>({left:c.id,right:right.columns.find(r=>r.name===c.name&&r.kind===c.kind)?.id??''}));
  const match=left.columns.find(c=>right.columns.some(r=>r.name===c.name&&r.kind===c.kind));
  return [{left:match?.id??left.columns[0]?.id??'',right:match?right.columns.find(r=>r.name===match.name&&r.kind===match.kind)!.id:''}];
 }
-function checkedColumns(source:ManagedSource){
+function checkedColumns(source:ModelTable){
  if(!source.columns.length||source.columns.length>LIMITS.columns||new Set(source.columns.map(c=>c.id)).size!==source.columns.length)throw new Error('MODEL_SCHEMA_INVALID: Schema nguồn không hợp lệ.');
  for(const c of source.columns)if(!/^c(?:0|[1-9][0-9]?)$/.test(c.id)||!['number','text','date','boolean'].includes(c.kind))throw new Error('MODEL_SCHEMA_INVALID: Mã hoặc kiểu cột không hợp lệ.');
 }
@@ -28,8 +58,8 @@ const q=(c:string)=>'"'+c+'"';
 function validKey(alias:string,ids:string[]){
  return ids.map(id=>alias+'.'+q(id)+' IS NOT NULL AND trim('+alias+'.'+q(id)+") <> ''").join(' AND ');
 }
-export function compileModel(input:ModelInput,left:ManagedSource,right:ManagedSource,aliases:readonly string[]){
- if(!input||!MODEL_OPERATIONS.includes(input.operation)||left.id===right.id||left.demo||right.demo||left.derived||right.derived)throw new Error('MODEL_SOURCE_INVALID: Chọn hai nguồn gốc khác nhau.');
+export function compileModel(input:ModelInput,left:ModelTable,right:ModelTable,aliases:readonly string[]){
+ if(!input||!MODEL_OPERATIONS.includes(input.operation)||left.id===right.id||left.demo||right.demo)throw new Error('MODEL_SOURCE_INVALID: Chọn hai bảng khác nhau.');
  if(input.leftId!==left.id||input.rightId!==right.id||input.leftRevision!==left.revision||input.rightRevision!==right.revision)throw new Error('MODEL_STALE: Nguồn đã thay đổi, hãy kiểm tra lại.');
  checkedColumns(left);checkedColumns(right);
  const alias=normalizeAlias(input.alias,aliases),lt=sourceTable(left.id),rt=sourceTable(right.id),union=isUnion(input.operation);

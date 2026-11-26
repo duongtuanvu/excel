@@ -1,4 +1,10 @@
-# KySheet v0.5 — Excel report automation
+# KySheet — Excel report automation
+
+## Chạy báo cáo kỳ mới
+
+Nhập file, thiết lập báo cáo rồi chọn **Workspace tài khoản → Lưu workspace**. Bạn có thể ghép nhiều bảng theo từng bước và dùng bảng đã biến đổi ở bước ghép tiếp theo. Workspace ghi nhớ nguồn, cột, phép ghép, các bước biến đổi và cấu hình báo cáo đang chọn. File Excel và kết quả tính nằm trong trình duyệt.
+
+Khi có số liệu mới, chọn **Chạy kỳ mới**, chọn báo cáo, gán file cho từng nguồn được liệt kê rồi bấm **Chạy báo cáo**. KySheet đọc các cột theo tên đã lưu và chạy lại các bước theo thứ tự. Nếu khóa ghép làm nhân dòng, ứng dụng hiển thị số dòng dự kiến để bạn xác nhận. File sai cấu trúc hoặc bước tính bị lỗi sẽ dừng cả lần chạy và giữ báo cáo đang mở. Khi thành công, dùng **Xuất Excel** hoặc **CSV** trên báo cáo kết quả.
 
 Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Phiên bản v0.5 yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
 
@@ -154,3 +160,6 @@ Mở ít nhất hai nguồn thật, chọn Cập nhật hàng loạt, gán file 
 
 ## Data Model v0.6.0
 Open two real sources, Mô hình dữ liệu → select left/right, operation, output name and key pairs or UNION mapping → Kiểm tra mô hình → Tạo bảng kết quả. INNER/LEFT/RIGHT/FULL JOIN exact stored-string equality, same logical kind, 1–3 keys; blank/NULL keys never match. Preview groups keys before expansion to count matches and unmatched rows. Expansion requires confirmation; JOIN columns prefixed Trái/Phải. UNION requires bijective mapping of equal column count and kinds; distinct removes exact duplicate rows; ALL keeps them. Output max 100k rows, 100 columns, 1m cells plus total workspace budget. Conservative UTF-8 output budget. Materialized readonly snapshot supports report, export, profiling; source revision changes invalidate it, stale snapshot cannot activate/query/export, delete it to reclaim memory. Raw file changes do not automatically rebuild. Model definitions and result tables are session-only; workspace saves raw sources only. No new D1 migration. Chained derived tables, persistent model recipes and automatic rebuild remain follow-up.
+
+## Visual Transformation Pipeline v0.6.1
+Open a real source or valid JOIN/UNION result, then Pipeline biến đổi dữ liệu. Build up to 16 ordered steps: trim, literal replace, rename, drop, filter, fill text blanks, strict cast (standard number, ISO date, boolean, text), exact full-row distinct. Enable/disable, reorder and undo/redo up to 30 edits. Check each step and inspect up to five sample rows/eight columns; create a new readonly result only after all enabled steps pass. SQL identifiers are validated, values escaped, guards reject invalid conversion or oversized text before materialization. Uses alternating staging tables, workspace and peak staging budgets. No edits to source. Stale dependency checks recurse through JOIN/UNION. Save up to 12 versioned recipes to account, load on compatible source and rerun manually; recipe names, column names and entered condition/replacement values can be sensitive. Samples/results/files stay local, no migration D1. Previous clients cannot erase saved recipes. Sequential pipeline only; no DAG, automated rebuild, sorting, splitting, merging, aggregation or unpivot yet.

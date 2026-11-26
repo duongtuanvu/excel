@@ -6,7 +6,9 @@ import type { Cell, Column, Kind, Source, Config, Report, Group } from './model'
 import type { Request, Response } from './protocol';
 import { WORKSPACE_LIMITS, sourceTable, uniqueAlias, normalizeAlias, replacementIssues, replacementSheet, checkWorkspaceBudget } from './source-model';
 import type { ManagedSource, Workspace, BookBudget } from './source-model';
-import { validateSavedSource } from './workspace-model';
+import { periodPlan, validateSavedSource, validateWorkspace } from './workspace-model';
+import { validatePeriodFiles } from './period-model';
+import type { PeriodResult } from './period-model';
 import type { SavedSource } from './workspace-model';
 import type { SourceProfile } from './profile-model';
 import { profileSource, profileDistribution } from './profile-engine';
@@ -16,8 +18,10 @@ import { resolveLayout,validateLayout,layoutConfig,suggestMapping,mappedRules } 
 import type { SheetBounds,ImportLayout,ColumnMapping,LayoutPreview } from './import-model';
 import { validateBatchFiles,checkBatchPeak,batchStage,swapBatchTables } from './batch-model';
 import type { BatchFile,BatchPreview,BatchItemPreview } from './batch-model';
-import {compileModel,readModelStats,joinRows,checkModelSize,modelSizeSql,modelCount,modelStale,isUnion} from './data-model';
+import {compileModel,readModelStats,joinRows,checkModelSize,modelSizeSql,modelCount,modelStale,isUnion,modelOrigin,bindRecipe,projectColumns} from './data-model';
 import type {ModelInput,ModelPreview} from './data-model';
+import {compileStep,validateRecipe,PIPELINE_LIMITS,STEP_LABELS} from './pipeline-model';
+import type {PipelineInput,PipelinePreview,PipelineStage} from './pipeline-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -178,7 +182,7 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaR
 }
 
 async function stageImport(db:duckdb.AsyncDuckDB,conn:duckdb.AsyncDuckDBConnection,table:string,path:string,prepared:ReturnType<typeof prepare>){
-  if(!/^(report_stage|batch_stage_source_s[1-9][0-9]{0,14})$/.test(table)||! /^(report_import|batch_import)\.csv$/.test(path))throw new Error('BATCH_STAGE_INVALID: Tên staging không hợp lệ.');
+  if(!/^(report_stage|(?:batch_stage_)?source_s[1-9][0-9]{0,14})$/.test(table)||! /^(report_import|batch_import)\.csv$/.test(path))throw new Error('BATCH_STAGE_INVALID: Tên staging không hợp lệ.');
   const {csv,next}=prepared;
     if(next.rows){
       await db.registerFileText(path,csv);
@@ -414,9 +418,13 @@ async function applyBatch(input:BatchFile[]):Promise<Workspace>{
   }
 }
 async function inspectModel(input:ModelInput){
- const left=rawEntry(input.leftId,input.leftRevision).source,right=rawEntry(input.rightId,input.rightRevision).source;
- const compiled=compileModel(input,left,right,Array.from(sources.values(),e=>e.source.alias));
+ const left=readable(input.leftId,input.leftRevision).source,right=readable(input.rightId,input.rightRevision).source;
  const {conn}=await connect();
+ const result=await inspectTables(input,left,right,sources,books,conn);
+ return {...result,conn,origin:modelOrigin(input,left,right)};
+}
+async function inspectTables(input:ModelInput,left:ManagedSource,right:ManagedSource,tables:Map<string,Entry>,workbooks:Map<string,Book>,conn:duckdb.AsyncDuckDBConnection){
+ const compiled=compileModel(input,left,right,Array.from(tables.values(),e=>e.source.alias));
  let stats:ModelPreview['stats']=null,expected:number|null=null;
  if(compiled.statsSql){
    const row=(await conn.query(compiled.statsSql)).get(0);
@@ -432,26 +440,200 @@ async function inspectModel(input:ModelInput){
  const rows=modelCount(row?.n,left.rows*right.rows+left.rows+right.rows),chars=modelCount(row?.chars,Number.MAX_SAFE_INTEGER);
  if(expected!==null&&rows!==expected)throw new Error('MODEL_STATS_INVALID: Số dòng kết quả không khớp dự kiến.');
  checkModelSize(rows,compiled.columns.length);
- checkWorkspaceBudget(Array.from(books.values(),b=>b.budget),[...Array.from(sources.values(),tableBudget),{rows,columns:compiled.columns,chars}]);
+ checkWorkspaceBudget(Array.from(workbooks.values(),b=>b.budget),[...Array.from(tables.values(),tableBudget),{rows,columns:compiled.columns,chars}]);
  const preview:ModelPreview={rows,columns:compiled.columns,chars,stats,removedDuplicates:isUnion(input.operation)?left.rows+right.rows-rows:null};
- return {compiled,preview,conn};
+ return {compiled,preview};
+}
+async function writeModel(conn:duckdb.AsyncDuckDBConnection,table:string,sql:string,expectedRows:number){
+ await conn.query('CREATE TABLE '+table+' AS '+sql);
+ const count=(await conn.query('SELECT COUNT(*) AS n FROM '+table)).get(0);
+ if(Number(count?.n)!==expectedRows)throw new Error('MODEL_ROW_MISMATCH: Số dòng không khớp kết quả kiểm tra.');
 }
 async function createModel(input:ModelInput&{confirmExpansion:boolean}):Promise<Workspace>{
- const {compiled,preview,conn}=await inspectModel(input);
+ const {compiled,preview,conn,origin}=await inspectModel(input);
  if(preview.stats?.expansion&&input.confirmExpansion!==true)throw new Error('MODEL_EXPANSION_CONFIRM: Xác nhận nguy cơ nhân bản dòng trước khi tạo bảng.');
  const id='s'+(++nextSource),table=sourceTable(id);
- const origin={operation:input.operation,leftId:input.leftId,leftRevision:input.leftRevision,rightId:input.rightId,rightRevision:input.rightRevision};
  const managed:ManagedSource={id,slotId:crypto.randomUUID(),alias:compiled.alias,bookId:'',revision:1,demo:false,name:compiled.alias,sheet:'Data Model',sheets:[],rows:preview.rows,columns:preview.columns,derived:origin,stale:false};
  try{
-   await conn.query('CREATE TABLE '+table+' AS '+compiled.sql);
-   const count=(await conn.query('SELECT COUNT(*) AS n FROM '+table)).get(0);
-   if(Number(count?.n)!==preview.rows)throw new Error('MODEL_ROW_MISMATCH: Số dòng không khớp preview.');
+   await writeModel(conn,table,compiled.sql,preview.rows);
  }catch(e){
    await conn.query('DROP TABLE IF EXISTS '+table).catch(()=>{});
    if(e instanceof Error&&e.message.startsWith('MODEL_'))throw e;
    throw new Error('MODEL_CREATE_FAILED: Không thể tạo bảng ghép. Nguồn gốc không thay đổi.');
  }
  sources.set(id,{source:managed,chars:preview.chars});activeId=id;return workspace();
+}
+async function rollbackPeriod(conn:duckdb.AsyncDuckDBConnection){
+  try{await conn.query('ROLLBACK');}
+  catch{engineUnsafe=true;throw new Error('PERIOD_RECOVERY_REQUIRED: Hãy tải lại trang để mở lại báo cáo.');}
+}
+
+async function runPeriod(input:Extract<Request,{type:'runPeriod'}>['input']):Promise<PeriodResult>{
+  const saved=validateWorkspace(input.saved);
+  if(!saved)throw new Error('PERIOD_NO_REPORT: Hãy lưu workspace trước khi chạy kỳ mới.');
+  const plan=periodPlan(saved,input.outputId);
+  const files=validatePeriodFiles(plan.slots,input.files);
+  const nodes=[...plan.slots,...plan.models];
+  const selected=new Set(nodes.map(n=>n.id));
+  if(!Array.isArray(input.confirmed)||input.confirmed.some(id=>!plan.models.some(m=>m.id===id)))
+    throw new Error('PERIOD_CONFIRM_INVALID: Hãy kiểm tra lại bước ghép.');
+  const oldBySlot=new Map(Array.from(sources.values(),e=>[e.source.slotId,e.source]));
+  const replaced=Array.from(sources.values()).filter(e=>selected.has(e.source.slotId)||(sources.size===1&&e.source.demo));
+  const tables=new Map(sources);
+  for(const e of replaced)tables.delete(e.source.id);
+  const retainedBooks=new Set(Array.from(tables.values(),e=>e.source.bookId));
+  const workbooks=new Map([...books].filter(([id])=>retainedBooks.has(id)));
+  const usedAliases=Array.from(tables.values(),e=>e.source.alias);
+  for(const n of nodes)normalizeAlias(n.alias,usedAliases);
+  if(tables.size+nodes.length>WORKSPACE_LIMITS.sources)throw new Error('SOURCE_LIMIT: Hãy đóng bớt nguồn trước khi chạy kỳ mới.');
+  const built=new Map<string,ManagedSource>();
+  function identity(id:string){
+    const old=oldBySlot.get(id);
+    return {id:old?.id??'s'+(++nextSource),slotId:id,revision:(old?.revision??0)+1,demo:false};
+  }
+  const {db,conn}=await connect();
+  let step=plan.output.alias;
+  await conn.query('BEGIN TRANSACTION');
+  try{
+    for(const e of replaced)await conn.query('DROP TABLE '+sourceTable(e.source.id));
+    for(const slot of plan.slots){
+      step=slot.alias;
+      const file=files.get(slot.id)!;
+      const book=readBook(file.name,file.bytes);
+      workbooks.set(book.id,book);
+      const budgets=Array.from(workbooks.values(),b=>b.budget);
+      checkWorkspaceBudget(budgets,Array.from(tables.values(),tableBudget));
+      const sheet=replacementSheet(slot.sheet,book.data.SheetNames);
+      const prepared=prepare(book.data,sheet,book.name,slot.schema??[],true,slot.layout);
+      const {next,issues,originalColumns,bounds,schema,layout,chars}=prepared;
+      if(issues.length)throw new Error('SCHEMA_CONVERSION_FAILED: '+issues.map(i=>i.name+' ('+i.invalid+' lỗi)').join(', '));
+      const mismatches=replacementIssues(slot.columns,next.columns);
+      if(mismatches.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+mismatches.join(', '));
+      const source:ManagedSource={...next,...identity(slot.id),alias:slot.alias,bookId:book.id,originalColumns,bounds,
+        ...(schema.length?{schema}:{}),...(layout?{layout}:{})};
+      compileReport(slot.config,source.columns);
+      tables.set(source.id,{source,chars});
+      checkWorkspaceBudget(budgets,Array.from(tables.values(),tableBudget));
+      try{await stageImport(db,conn,sourceTable(source.id),'batch_import.csv',prepared);}
+      finally{if(next.rows)await db.dropFile('batch_import.csv').catch(()=>{});}
+      built.set(slot.id,source);
+    }
+    for(const model of plan.models){
+      step=model.alias;
+      if(model.operation==='pipeline'){
+        const original=projectColumns(built.get(model.leftSlotId)!,model.leftColumns);
+        const result=await executePipeline({sourceId:original.id,revision:original.revision,alias:model.alias,recipe:model.recipe},
+          original,tables,workbooks,conn,identity(model.id),true);
+        if(!('entry' in result))throw new Error('PIPELINE_EMPTY: Thiếu bảng kết quả.');
+        const item=result.entry;
+        compileReport(model.config,item.source.columns);
+        tables.set(item.source.id,item);built.set(model.id,item.source);
+        continue;
+      }
+      const bound=bindRecipe(model,model.alias,built.get(model.leftSlotId)!,built.get(model.rightSlotId)!);
+      const {compiled,preview}=await inspectTables(bound.input,bound.left,bound.right,tables,workbooks,conn);
+      if(preview.stats?.expansion&&!input.confirmed.includes(model.id)){
+        await rollbackPeriod(conn);
+        return {status:'confirm',warning:{id:model.id,alias:model.alias,rows:preview.rows,matchedPairs:preview.stats.matchedPairs}};
+      }
+      compileReport(model.config,compiled.columns);
+      const source:ManagedSource={...identity(model.id),alias:model.alias,name:model.alias,bookId:'',sheet:'Data Model',sheets:[],
+        rows:preview.rows,columns:compiled.columns,derived:modelOrigin(bound.input,bound.left,bound.right)};
+      await writeModel(conn,sourceTable(source.id),compiled.sql,preview.rows);
+      tables.set(source.id,{source,chars:preview.chars});
+      built.set(model.id,source);
+    }
+    step=plan.output.alias;
+    await makeReport(plan.output.config,0,built.get(plan.output.id)!);
+    await conn.query('COMMIT');
+  }catch(error){
+    if(engineUnsafe)throw error;
+    await rollbackPeriod(conn);
+    const detail=error instanceof Error&&/^(SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|MODEL|WORKSPACE|PIPELINE|PERIOD|BATCH)_/.test(error.message)
+      ?error.message:'Không thể đọc bảng hoặc tính báo cáo. Hãy kiểm tra file đã chọn.';
+    throw new Error(step+' — '+detail);
+  }
+  // Publish the new revisions only after every source, dependent model and report succeeds.
+  for(const e of replaced)if(!tables.has(e.source.id))sources.delete(e.source.id);
+  for(const [id,item] of tables)sources.set(id,item);
+  for(const [id,book] of workbooks)books.set(id,book);
+  releaseBooks();
+  activeId=built.get(plan.output.id)!.id;
+  return {status:'ready',workspace:workspace()};
+}
+
+async function runPipeline(input:PipelineInput,apply:boolean):Promise<PipelinePreview|Workspace>{
+ const original=readable(input.sourceId,input.revision).source;
+ if(original.demo||original.derived?.operation==='pipeline')throw new Error('PIPELINE_SOURCE_INVALID: Chọn nguồn thật hoặc bảng JOIN/UNION còn hiệu lực.');
+ const {conn}=await connect();
+ const target=apply?{id:'s'+(++nextSource),slotId:crypto.randomUUID(),revision:1}:null;
+ const result=await executePipeline(input,original,sources,books,conn,target,false);
+ if('preview' in result)return result.preview;
+ sources.set(result.entry.source.id,result.entry);
+ activeId=result.entry.source.id;
+ return workspace();
+}
+async function executePipeline(input:PipelineInput,original:ManagedSource,tables:Map<string,Entry>,workbooks:Map<string,Book>,
+ conn:duckdb.AsyncDuckDBConnection,target:Pick<ManagedSource,'id'|'slotId'|'revision'>|null,inPeriod:boolean):Promise<{preview:PipelinePreview}|{entry:Entry}>{
+ if(typeof input.alias!=='string')throw new Error('PIPELINE_INVALID: Tên bảng kết quả không hợp lệ.');
+ const recipe=validateRecipe(input.recipe),alias=normalizeAlias(input.alias,Array.from(tables.values(),e=>e.source.alias));
+ if(!recipe.steps.some(s=>s.enabled))throw new Error('PIPELINE_EMPTY: Cần bật ít nhất một bước.');
+ const stages:PipelineStage[]=[];
+ const originalTables=Array.from(tables.values(),tableBudget),budgets=Array.from(workbooks.values(),b=>b.budget);
+ let table=sourceTable(original.id),columns=original.columns,rows=original.rows,chars=0;
+ let stageBudget:{rows:number;columns:Column[];chars:number}|null=null;
+ const temporary=['pipeline_stage_a','pipeline_stage_b'];
+ let output:string|null=null,stepIndex=-1;
+ try{
+   for(const name of temporary)await conn.query('DROP TABLE IF EXISTS '+name);
+   for(let i=0;i<recipe.steps.length;i++){
+     stepIndex=i;
+     const step=recipe.steps[i],before=rows;
+     if(step.enabled){
+       const compiled=compileStep(step,columns,table);
+       if(compiled.guard){
+         const count=modelCount((await conn.query(compiled.guard)).get(0)?.n,rows);
+         if(count)throw new Error((step.type==='replace'?'PIPELINE_TEXT_LIMIT':'PIPELINE_CONVERSION_FAILED')+': Bước '+(i+1)+' có '+count+' ô không hợp lệ.');
+       }
+       const size=(await conn.query(modelSizeSql(compiled.sql,compiled.columns))).get(0);
+       const nextRows=modelCount(size?.n,rows),nextChars=modelCount(size?.chars,Number.MAX_SAFE_INTEGER);
+       checkModelSize(nextRows,compiled.columns.length);
+       const nextBudget={rows:nextRows,columns:compiled.columns,chars:nextChars};
+       checkWorkspaceBudget(budgets,[...originalTables,nextBudget]);
+       checkBatchPeak(budgets,[...originalTables,...(stageBudget?[stageBudget]:[]),nextBudget]);
+       const next=table===temporary[0]?temporary[1]:temporary[0];
+       await conn.query('CREATE TABLE '+next+' AS '+compiled.sql);
+       const actual=(await conn.query('SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM '+next)).get(0)?.n;
+       if(modelCount(actual,rows)!==nextRows)throw new Error('PIPELINE_ROW_MISMATCH: Số dòng không khớp tại bước '+(i+1)+'.');
+       if(temporary.includes(table))await conn.query('DROP TABLE '+table);
+       table=next;columns=compiled.columns;rows=nextRows;chars=nextChars;stageBudget=nextBudget;
+     }
+     if(!target){
+       const visible=columns.slice(0,PIPELINE_LIMITS.sampleColumns);
+       const projection=visible.map(c=>{if(!/^c(?:0|[1-9][0-9]?)$/.test(c.id))throw new Error('PIPELINE_SCHEMA_INVALID');const q='"'+c.id+'"';return "CASE WHEN "+q+" IS NULL THEN '(NULL)' WHEN length("+q+")>"+PIPELINE_LIMITS.sampleLength+" THEN left("+q+","+PIPELINE_LIMITS.sampleLength+") || '…' ELSE "+q+" END AS "+q;}).join(', ');
+       const sampleResult=await conn.query('SELECT '+projection+' FROM '+table+' LIMIT '+PIPELINE_LIMITS.sampleRows);
+       const sample=Array.from(sampleResult,r=>visible.map(c=>String(r?.[c.id]??'(NULL)')));
+       stages.push({index:i,label:STEP_LABELS[step.type],enabled:step.enabled,before,rows,columns:columns.map(c=>({...c})),sample});
+     }
+   }
+   if(!target)return {preview:{rows,columns,stages}};
+   if(!stageBudget||!temporary.includes(table))throw new Error('PIPELINE_EMPTY: Không có kết quả.');
+   const managed:ManagedSource={...target,alias,bookId:'',demo:false,name:alias,sheet:'Pipeline',sheets:[],rows,columns,
+     derived:{operation:'pipeline',leftId:original.id,leftRevision:original.revision,rightId:original.id,rightRevision:original.revision,
+       leftSlotId:original.slotId,leftColumns:original.columns.map(c=>c.name),recipe},stale:false};
+   // Publish only after the entire recipe succeeded. ALTER is a single atomic DDL.
+   output=sourceTable(target.id);
+   await conn.query('ALTER TABLE '+table+' RENAME TO '+output);
+   output=null;
+   return {entry:{source:managed,chars}};
+ }catch(e){
+   if(output&&!inPeriod)await conn.query('DROP TABLE IF EXISTS '+output).catch(()=>{engineUnsafe=true;});
+   if(e instanceof Error&&/^(PIPELINE|MODEL|SOURCE|WORKBOOK|BATCH)_[A-Z_]+:/.test(e.message))throw e;
+   throw new Error('PIPELINE_STEP_FAILED: Không thể thực thi bước '+(stepIndex+1)+'. Nguồn gốc không thay đổi.');
+ }finally{
+   // A failed period owns these tables inside its transaction and rolls them back.
+   if(!inPeriod)for(const name of temporary)try{await conn.query('DROP TABLE IF EXISTS '+name);}catch{engineUnsafe=true;}
+ }
 }
 async function handle(req: Request):Promise<unknown>{
   if(engineUnsafe)throw new Error('ENGINE_RECOVERY_REQUIRED: Hãy tải lại trang vì không xác nhận được trạng thái transaction.');
@@ -503,6 +685,9 @@ async function handle(req: Request):Promise<unknown>{
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
     }
+    case 'runPeriod':return runPeriod(req.input);
+    case 'previewPipeline':return runPipeline(req.input,false);
+    case 'createPipeline':return runPipeline(req.input,true);
     case 'previewModel':return (await inspectModel(req.input)).preview;
     case 'createModel':return createModel(req.input);
     case 'previewBatch':return planBatch(req.input.files,false).preview;

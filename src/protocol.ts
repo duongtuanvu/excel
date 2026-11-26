@@ -1,11 +1,13 @@
 import type { Config, Report } from './model';
 import type { Workspace } from './source-model';
-import type { SavedSource } from './workspace-model';
+import type { SavedSource, SavedWorkspace } from './workspace-model';
+import type { PeriodFile, PeriodResult } from './period-model';
 import type { SourceProfile, Distribution } from './profile-model';
 import type { SchemaRule, SchemaPreview } from './schema-model';
 import type { ImportLayout, LayoutPreview, ColumnMapping, ReplacementPreview, MappedPreview } from './import-model';
 import type { BatchFile, BatchPreview } from './batch-model';
 import type { ModelInput,ModelPreview } from './data-model';
+import type { PipelineInput,PipelinePreview } from './pipeline-model';
 type SourceVersion={sourceId:string;revision:number};
 export type Requests={
   demo:{input:null;output:Workspace};
@@ -16,6 +18,9 @@ export type Requests={
   removeSource:{input:{sourceId:string};output:Workspace};
   replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
   restoreSource:{input:{slot:SavedSource;name:string;bytes:ArrayBuffer};output:Workspace};
+  runPeriod:{input:{saved:SavedWorkspace;outputId:string;files:PeriodFile[];confirmed:string[]};output:PeriodResult};
+  previewPipeline:{input:PipelineInput;output:PipelinePreview};
+  createPipeline:{input:PipelineInput;output:Workspace};
   previewModel:{input:ModelInput;output:ModelPreview};
   createModel:{input:ModelInput&{confirmExpansion:boolean};output:Workspace};
   previewBatch:{input:{files:BatchFile[]};output:BatchPreview};

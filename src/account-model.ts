@@ -4,10 +4,12 @@ import { validateTemplate } from './model.ts';
 import type { Config } from './model.ts';
 import { validateWorkspace } from './workspace-model.ts';
 import type { SavedWorkspace } from './workspace-model.ts';
+import { validateRecipes } from './pipeline-model.ts';
+import type { PipelineRecipe } from './pipeline-model.ts';
 
 export const ACCOUNT_MAX_BYTES = 512_000;
 export type Account = { id: string; email: string };
-export type AccountSettings = LocalUser & { lastConfig: Config | null; workspace: SavedWorkspace | null };
+export type AccountSettings = LocalUser & { lastConfig: Config | null; workspace: SavedWorkspace | null; pipelines?: PipelineRecipe[] };
 export type AccountSnapshot = { account: Account; settings: AccountSettings; revision: number; expiresAt: number };
 export function defaultSettings(name = 'Người dùng'): AccountSettings {
   const user = defaultUser();
@@ -18,7 +20,8 @@ export function validateSettings(input: unknown): AccountSettings {
   const obj = input as Record<string, unknown>;
   const user = validateUser(obj);
   const lastConfig = obj.lastConfig == null ? null : validateTemplate({ version: 1, config: obj.lastConfig }).config;
-  const settings = { ...user, lastConfig, workspace: validateWorkspace(obj.workspace) };
+  const pipelines=validateRecipes(obj.pipelines);
+  const settings = { ...user, lastConfig, workspace: validateWorkspace(obj.workspace), ...(pipelines.length?{pipelines}:{}) };
   if (new TextEncoder().encode(JSON.stringify(settings)).byteLength > ACCOUNT_MAX_BYTES) throw new Error('Cấu hình vượt 512 KB.');
   return settings;
 }
