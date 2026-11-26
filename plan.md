@@ -466,3 +466,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [ ] CI/auto release and production smoke test. Column collapse, drag/drop, richer expressions, time intelligence and DECIMAL remain future work.
 
 - [x] CI 45796076490: 56/56 unit/integration and production build passed; 22/23 E2E passed. Subtotal rowheader accessible name changed when a nested expand/collapse button was introduced; the exact-name regression locator could no longer find it. Stabilized rowheader accessible name via aria-label, retained independent button labels and aria-expanded, preserved all numeric assertions and added collapse/expand regression checking child visibility and unchanged subtotal. No SQL changes. Awaiting new CI and release verification.
+
+### Advanced Expressions & Time Intelligence v0.7.2
+- [x] v0.7.1 CI 45796862813: 56 unit/integration + 23 E2E pass, main 583bb87 verified.
+- [x] Source bounded expression parser, arithmetic/IF/ABS/COALESCE, row/aggregate references, safe SQL compilation and schema rename support.
+- [x] Source calendar month/year, exact previous/YoY, change/growth and additive filtered YTD; date validation, export format and drill scope. UI editor and account capability protection.
+- [ ] CI/auto release and production smoke test. Fiscal dates, rolling periods, dense date series and exact DECIMAL remain future work.

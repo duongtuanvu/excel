@@ -1,3 +1,4 @@
+import {parseExpression,expressionRefs,printExpression} from './pivot-expression.ts';
 import type {Aggregate,Column} from './model.ts';
 
 export const PIVOT_LIMITS={rowFields:3,columnFields:2,measures:6,rows:500,axisColumns:64,cells:20000,label:240,page:40} as const;
@@ -14,8 +15,17 @@ export type MeasureBase={id:string;name:string;format:PivotFormat;decimals:numbe
 export type AggregateMeasure=MeasureBase&{kind:'aggregate';aggregate:Aggregate;column:string};
 export type RowMeasure=MeasureBase&{kind:'row';aggregate:'sum'|'avg'|'min'|'max';expression:RowFormula};
 export type FormulaMeasure=MeasureBase&{kind:'formula';left:string;op:PivotOp;right:string};
-export type PivotMeasure=AggregateMeasure|RowMeasure|FormulaMeasure;
-export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean;topN?:{count:number;measureId:string}};
+export const TIME_OPERATIONS=['previous','change','growth','prior-year','yoy-growth','ytd'] as const;
+export type TimeOperation=typeof TIME_OPERATIONS[number];
+export const TIME_LABELS:Record<TimeOperation,string>={previous:'Kỳ trước',change:'Chênh lệch kỳ trước',growth:'Tăng trưởng kỳ trước', 'prior-year':'Cùng kỳ năm trước','yoy-growth':'Tăng trưởng cùng kỳ','ytd':'Lũy kế năm (YTD)'};
+export type CalendarGrain='month'|'year';
+export type ExpressionMeasure=MeasureBase&{kind:'expression';aggregate:RowMeasure['aggregate'];formula:string};
+export type MeasureExpression=MeasureBase&{kind:'measure-expression';formula:string};
+export type TimeMeasure=MeasureBase&{kind:'time';measureId:string;operation:TimeOperation};
+export type PivotMeasure=AggregateMeasure|RowMeasure|FormulaMeasure|ExpressionMeasure|MeasureExpression|TimeMeasure;
+export const isAdditive=(m:PivotMeasure)=>((m.kind==='aggregate'&&['sum','count'].includes(m.aggregate))||((m.kind==='row'||m.kind==='expression')&&m.aggregate==='sum'));
+export function isGrowth(m:PivotMeasure):boolean{return m.kind==='time'&&(m.operation==='growth'||m.operation==='yoy-growth');}
+export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean;topN?:{count:number;measureId:string};calendar?:CalendarGrain};
 export type PivotAxis={level:number;labels:(string|null)[]};
 export type PivotResult={rows:PivotAxis[];columns:PivotAxis[];values:(number|null)[][];ranked?:{shownLeaves:number;hiddenLeaves:number}};
 export type PivotDrill={row:PivotAxis;column:PivotAxis;page:number;rows:(string|null)[][];columns:Column[];count:number};
@@ -46,7 +56,9 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
  if(v.version!==1||typeof v.subtotals!=='boolean'||!Array.isArray(v.rows)||v.rows.length>PIVOT_LIMITS.rowFields||!Array.isArray(v.columns)||v.columns.length>PIVOT_LIMITS.columnFields||!Array.isArray(v.measures)||!v.measures.length||v.measures.length>PIVOT_LIMITS.measures)throw err('Tối đa 3 trường hàng, 2 trường cột, 6 chỉ số.');
  const rows=v.rows.map(n=>text(n,240)),columns=v.columns.map(n=>text(n,240));
  if(new Set([...rows,...columns]).size!==rows.length+columns.length)throw err('Trường hàng/cột không được trùng.');
- const ids=new Set<string>(),names=new Set<string>();
+ let calendar:CalendarGrain|undefined;
+ if(v.calendar!==undefined){if(!['month','year'].includes(String(v.calendar))||columns.length!==1)throw err('Nhóm thời gian cần đúng một trường cột ngày.');calendar=v.calendar as CalendarGrain;}
+ const ids=new Set<string>(),names=new Set<string>(),previous=new Map<string,PivotMeasure>();
  const measures:PivotMeasure[]=v.measures.map(raw=>{
    const m=rec(raw),id=text(m.id,40),name=text(m.name,100).trim();
    if(!/^m[1-9][0-9]{0,7}$/.test(id)||ids.has(id)||names.has(name.toLowerCase())||!PIVOT_FORMATS.includes(m.format as PivotFormat)||typeof m.decimals!=='number'||!Number.isInteger(m.decimals)||m.decimals<0||m.decimals>6)throw err('Mã, tên hoặc định dạng chỉ số không hợp lệ/trùng.');
@@ -62,33 +74,48 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
      result={...base,kind:'row',aggregate:m.aggregate as RowMeasure['aggregate'],expression:{left:operand(e.left),op:op(e.op),right:operand(e.right)}};
    }else if(m.kind==='formula'){
      const left=text(m.left,40),right=text(m.right,40);
-     if(!ids.has(left)||!ids.has(right))throw err('Công thức tổng hợp chỉ được tham chiếu chỉ số đứng trước (không vòng lặp).');
+     if(!ids.has(left)||!ids.has(right)||previous.get(left)?.kind==='time'||previous.get(right)?.kind==='time')throw err('Công thức tổng hợp chỉ được tham chiếu chỉ số đứng trước (không vòng lặp).');
      result={...base,kind:'formula',left,op:op(m.op),right};
+   }else if(m.kind==='expression'||m.kind==='measure-expression'){
+     const mode=m.kind==='expression'?'row':'measure',expr=parseExpression(m.formula,mode);
+     if(mode==='measure'&&expressionRefs(expr).some(n=>!previous.has(n)||previous.get(n)?.kind==='time'))throw err('Công thức chỉ được tham chiếu chỉ số đứng trước, không gồm chỉ số thời gian.');
+     if(m.kind==='expression'){
+       if(!['sum','avg','min','max'].includes(String(m.aggregate)))throw err('Công thức từng dòng cần SUM, AVG, MIN hoặc MAX.');
+       result={...base,kind:'expression',aggregate:m.aggregate as RowMeasure['aggregate'],formula:m.formula as string};
+     }else result={...base,kind:'measure-expression',formula:m.formula as string};
+   }else if(m.kind==='time'){
+     const source=typeof m.measureId==='string'?previous.get(m.measureId):undefined;
+     if(!calendar||!source||source.kind==='time'||m.showAs!==undefined||!TIME_OPERATIONS.includes(m.operation as TimeOperation))throw err('Chỉ số thời gian cần nhóm cột ngày và chỉ số gốc đứng trước; không dùng thêm tỷ trọng.');
+     if(m.operation==='ytd'&&(calendar!=='month'||!isAdditive(source)))throw err('YTD chỉ dùng nhóm tháng với SUM/COUNT cộng được.');
+     result={...base,kind:'time',measureId:source.id,operation:m.operation as TimeOperation};
    }else throw err('Loại chỉ số không hợp lệ.');
-   ids.add(id);names.add(name.toLowerCase());return result;
+   ids.add(id);names.add(name.toLowerCase());previous.set(id,result);return result;
  });
  let topN:PivotConfig['topN'];
  if(v.topN!==undefined){
    const t=rec(v.topN);
-   if(!rows.length||typeof t.count!=='number'||!Number.isInteger(t.count)||t.count<1||t.count>100||typeof t.measureId!=='string'||!ids.has(t.measureId))throw err('Top N cần nhóm hàng, N từ 1–100 và chỉ số hợp lệ.');
+   if(!rows.length||typeof t.count!=='number'||!Number.isInteger(t.count)||t.count<1||t.count>100||typeof t.measureId!=='string'||!ids.has(t.measureId)||previous.get(t.measureId)?.kind==='time')throw err('Top N cần nhóm hàng, N từ 1–100 và chỉ số hợp lệ.');
    topN={count:t.count,measureId:t.measureId};
  }
- return {version:1,rows,columns,measures,subtotals:v.subtotals,...(topN?{topN}:{})};
+ return {version:1,rows,columns,measures,subtotals:v.subtotals,...(topN?{topN}:{}),...(calendar?{calendar}:{})};
 }
 export function pivotReferences(pivot:PivotConfig):string[]{
  const refs=[...pivot.rows,...pivot.columns];
  for(const m of pivot.measures){
    if(m.kind==='aggregate'&&m.aggregate!=='count')refs.push(m.column);
    if(m.kind==='row')for(const o of [m.expression.left,m.expression.right])if(o.kind==='column')refs.push(o.column);
+   if(m.kind==='expression')refs.push(...expressionRefs(parseExpression(m.formula,'row')));
  }
  return [...new Set(refs)];
 }
 export function validatePivotColumns(pivot:PivotConfig,columns:readonly Column[]):void{
  const names=new Map(columns.map(c=>[c.name,c.kind]));
+ if(pivot.calendar&&names.get(pivot.columns[0])!=='date')throw Error('PIVOT_TIME_COLUMN: Cần chọn cột có kiểu ngày.');
  for(const n of pivotReferences(pivot))if(!names.has(n))throw new Error('PIVOT_COLUMN_MISSING: Không tìm thấy cột '+n+'.');
  for(const m of pivot.measures){
    if(m.kind==='aggregate'&&!['count','distinct'].includes(m.aggregate)&&names.get(m.column)!=='number')throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần cột số.');
    if(m.kind==='row')for(const o of [m.expression.left,m.expression.right])if(o.kind==='column'&&names.get(o.column)!=='number')throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
+   if(m.kind==='expression'&&expressionRefs(parseExpression(m.formula,'row')).some(n=>names.get(n)!=='number'))throw Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
  }
 }
 export function renamePivot(pivot:PivotConfig,lookup:(name:string)=>string):PivotConfig{
@@ -96,6 +123,7 @@ export function renamePivot(pivot:PivotConfig,lookup:(name:string)=>string):Pivo
  return {...pivot,rows:pivot.rows.map(lookup),columns:pivot.columns.map(lookup),measures:pivot.measures.map(m=>{
    if(m.kind==='aggregate'&&m.aggregate!=='count')return {...m,column:lookup(m.column)};
    if(m.kind==='row')return {...m,expression:{...m.expression,left:operandName(m.expression.left),right:operandName(m.expression.right)}};
+   if(m.kind==='expression'){const expr=parseExpression(m.formula,'row');return expressionRefs(expr).some(n=>lookup(n)!==n)?{...m,formula:printExpression(expr,'row',lookup)}:m;}
    return m;
  })};
 }
@@ -109,7 +137,8 @@ export function axisLabel(axis:PivotAxis,fields:number):string{
  const values=axis.labels.map(v=>v===null?'(NULL)':v===''?'(Rỗng)':v);
  return (axis.level<fields?'Tổng phụ · ':'')+values.join(' / ');
 }
-export function effectivePivotFormat(measure:PivotMeasure):PivotFormat{return measure.showAs?'percent':measure.format;}
+export function effectivePivotFormat(measure:PivotMeasure):PivotFormat{return measure.showAs||isGrowth(measure)?'percent':measure.format;}
+export function hasPivotAdvanced(pivot?:PivotConfig):boolean{return !!pivot&&(!!pivot.calendar||pivot.measures.some(m=>m.kind==='expression'||m.kind==='measure-expression'||m.kind==='time'));}
 export function hasPivotAnalytics(pivot?:PivotConfig):boolean{return !!pivot&&(!!pivot.topN||pivot.measures.some(m=>!!m.showAs));}
 export function pivotFormat(value:number|null,measure:PivotMeasure):string{
  if(value===null)return '—';
@@ -117,7 +146,7 @@ export function pivotFormat(value:number|null,measure:PivotMeasure):string{
  return new Intl.NumberFormat('vi-VN',effectivePivotFormat(measure)==='vnd'?{...opts,style:'currency',currency:'VND'}:effectivePivotFormat(measure)==='percent'?{...opts,style:'percent'}:opts).format(value);
 }
 export function pivotMatrix(pivot:PivotConfig,result:PivotResult):(string|number|null)[][]{
- const suffix=(m:PivotMeasure)=>m.showAs?' (% '+(m.showAs==='grand'?'tổng chung':m.showAs==='row'?'tổng hàng':'tổng cột')+'; 1=100%)':'';
+ const suffix=(m:PivotMeasure)=>m.kind==='time'?' ('+TIME_LABELS[m.operation]+(isGrowth(m)?'; 1=100%':'')+')':m.showAs?' (% '+(m.showAs==='grand'?'tổng chung':m.showAs==='row'?'tổng hàng':'tổng cột')+'; 1=100%)':'';
  const totalSuffix=pivot.topN?' (toàn bộ sau lọc)':'';
  return [['Cấp hàng',...pivot.rows,...result.columns.flatMap(a=>pivot.measures.map(m=>axisLabel(a,pivot.columns.length)+' · '+m.name+suffix(m)))],
  ...result.rows.map((a,i)=>[a.level===0?'Tổng cộng'+totalSuffix:a.level<pivot.rows.length?'Tổng phụ'+totalSuffix:'Chi tiết',...pivot.rows.map((_,j)=>j<a.level?a.labels[j]:null),...result.values[i]])];

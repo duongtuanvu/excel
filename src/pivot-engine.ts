@@ -1,11 +1,16 @@
 import {compileReport,sqlText,LIMITS} from './model.ts';
 import {applyPivotAnalytics} from './pivot-analytics.ts';
+import {applyTimeMeasures,calendarIndex} from './pivot-time.ts';
+import {parseExpression,compileExpression,evaluateExpression} from './pivot-expression.ts';
 import type {Column,Config} from './model.ts';
 import {validatePivot,validatePivotColumns,PIVOT_LIMITS,arithmetic,PIVOT_DRILL_PAGE,PIVOT_DRILL_TEXT} from './pivot-config.ts';
-import type {PivotAxis,PivotResult,Operand,PivotDrill,PivotConfig} from './pivot-config.ts';
+import type {PivotAxis,PivotResult,Operand,PivotDrill,PivotConfig,CalendarGrain} from './pivot-config.ts';
 type Result=Iterable<unknown>;
 const key=(a:PivotAxis)=>JSON.stringify([a.level,a.labels]);
 const num=(v:unknown):number|null=>v==null?null:Number.isFinite(Number(v))?Number(v):null;
+function calendarField(field:string,grain:CalendarGrain):string{
+ return "strftime(TRY_CAST("+field+" AS TIMESTAMP), '"+(grain==='month'?'%Y-%m':'%Y')+"')";
+}
 function sortAxis(a:PivotAxis,b:PivotAxis){
  for(let i=0;i<Math.min(a.level,b.level);i++){
   const x=a.labels[i],y=b.labels[i];if(x===y)continue;
@@ -23,7 +28,14 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
   if(!c||!/^c[0-9]+$/.test(c.id))throw Error('PIVOT_COLUMN_MISSING: '+name);
   return '"'+c.id+'"';
  };
- const r=pivot.rows.map(field),c=pivot.columns.map(field),dims=[...r,...c];
+ const r=pivot.rows.map(field),rawC=pivot.columns.map(field),dims=[...r,...rawC];
+ const c=pivot.calendar?rawC.map(x=>calendarField(x,pivot.calendar!)):rawC;
+ if(pivot.calendar){
+   const d=rawC[0],date='TRY_CAST('+d+' AS TIMESTAMP)';
+   const bad=d+" IS NOT NULL AND trim("+d+") <> '' AND (NOT coalesce(isfinite("+date+") AND year("+date+") BETWEEN 1 AND 9999,false))";
+   const result=Array.from(await query('SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (SELECT 1'+from+(from.includes(' WHERE ')?' AND ':' WHERE ')+'('+bad+') LIMIT 1) AS invalid_dates'))[0] as Record<string,unknown>|undefined;
+   if(Number(result?.n)!==0)throw Error('PIVOT_TIME_DATE_INVALID: Cột ngày có giá trị không hợp lệ. Hãy chuẩn hóa kiểu ngày trước.');
+ }
  const levels=(n:number)=>Array.from(new Set(pivot.subtotals?Array.from({length:n+1},(_,i)=>i):[0,n]));
  const rl=levels(r.length),cl=levels(c.length);
  // Preflight each axis independently before issuing the bounded cross-product aggregation.
@@ -50,11 +62,14 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
  }
  const numeric=(name:string)=>'TRY_CAST('+field(name)+' AS DOUBLE)';
  const operand=(o:Operand)=>o.kind==='constant'?'CAST('+String(o.value)+' AS DOUBLE)':numeric(o.column);
+ const expressions=new Map(pivot.measures.flatMap(m=>m.kind==='expression'||m.kind==='measure-expression'?[[m.id,parseExpression(m.formula,m.kind==='expression'?'row':'measure')] as const]:[]));
  const measures=pivot.measures.flatMap((m,i)=>{
-  if(m.kind==='formula')return [];
+  if(m.kind==='formula'||m.kind==='measure-expression'||m.kind==='time')return [];
   let expr:string;
   if(m.kind==='aggregate'){
    expr=m.aggregate==='count'?'COUNT(*)':m.aggregate==='distinct'?'COUNT(DISTINCT '+field(m.column)+')':m.aggregate.toUpperCase()+'('+numeric(m.column)+')';
+  }else if(m.kind==='expression'){
+   expr=m.aggregate.toUpperCase()+'('+compileExpression(expressions.get(m.id)!,numeric)+')';
   }else{
    const a=operand(m.expression.left),b=operand(m.expression.right);
    const expression='('+a+' '+m.expression.op+' '+(m.expression.op==='/'?'NULLIF('+b+',0)':b)+')';
@@ -74,7 +89,7 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
    rowMap.set(rk,ra);colMap.set(ck,ca);
    const vals:(number|null)[]=[],byId=new Map<string,number|null>();
    pivot.measures.forEach((m,i)=>{
-    const v=m.kind==='formula'?arithmetic(byId.get(m.left)??null,byId.get(m.right)??null,m.op):num(row['m'+i]);
+    const v=m.kind==='time'?null:m.kind==='measure-expression'?evaluateExpression(expressions.get(m.id)!,n=>byId.get(n)??null):m.kind==='formula'?arithmetic(byId.get(m.left)??null,byId.get(m.right)??null,m.op):num(row['m'+i]);
     vals.push(v);byId.set(m.id,v);
    });
    data.set(JSON.stringify([rk,ck]),vals);
@@ -85,9 +100,9 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
  // A missing intersection has zero count/distinct and NULL for non-count measures.
  function emptyValues(){
   const seen=new Map<string,number|null>();
-  return pivot!.measures.map(m=>{const value=m.kind==='formula'?arithmetic(seen.get(m.left)??null,seen.get(m.right)??null,m.op):m.kind==='aggregate'&&['count','distinct'].includes(m.aggregate)?0:null;seen.set(m.id,value);return value;});
+  return pivot!.measures.map(m=>{const value=m.kind==='measure-expression'?evaluateExpression(expressions.get(m.id)!,n=>seen.get(n)??null):m.kind==='formula'?arithmetic(seen.get(m.left)??null,seen.get(m.right)??null,m.op):m.kind==='aggregate'&&['count','distinct'].includes(m.aggregate)?0:null;seen.set(m.id,value);return value;});
  }
- return applyPivotAnalytics(pivot,{rows:rowAxes,columns:columnAxes,values:rowAxes.map(a=>columnAxes.flatMap(b=>data.get(JSON.stringify([key(a),key(b)]))??emptyValues()))});
+ return applyPivotAnalytics(pivot,applyTimeMeasures(pivot,{rows:rowAxes,columns:columnAxes,values:rowAxes.map(a=>columnAxes.flatMap(b=>data.get(JSON.stringify([key(a),key(b)]))??emptyValues()))}));
 }
 
 function checkedDrillAxis(input:unknown,fields:string[],pivot:PivotConfig):PivotAxis{
@@ -107,7 +122,8 @@ export function compilePivotDrill(config:Config,columns:Column[],table:string,ro
    if(!col||!/^c[0-9]+$/.test(col.id))throw Error('PIVOT_DRILL_INVALID: Cột không hợp lệ.');
    return '"'+col.id+'"';
  };
- const predicates=[...r.labels.map((v,i)=>({field:field(pivot.rows[i]),v})),...c.labels.map((v,i)=>({field:field(pivot.columns[i]),v}))].map(({field,v})=>field+(v===null?' IS NULL':' = '+sqlText(v)));
+ if(pivot.calendar&&c.level&&c.labels[0]!==null&&calendarIndex(c.labels[0],pivot.calendar)===null)throw Error('PIVOT_DRILL_INVALID: Kỳ thời gian không hợp lệ.');
+ const predicates=[...r.labels.map((v,i)=>({field:field(pivot.rows[i]),v})),...c.labels.map((v,i)=>({field:pivot.calendar?calendarField(field(pivot.columns[i]),pivot.calendar):field(pivot.columns[i]),v}))].map(({field,v})=>field+(v===null?' IS NULL':' = '+sqlText(v)));
  const scope=from+(predicates.length?(from.includes(' WHERE ')?' AND ':' WHERE ')+predicates.join(' AND '):'');
  if(!columns.length||columns.length>LIMITS.columns||new Set(columns.map(v=>v.id)).size!==columns.length)throw Error('PIVOT_DRILL_INVALID: Schema không hợp lệ.');
  const projection=columns.map(col=>{

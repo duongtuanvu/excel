@@ -1,0 +1,23 @@
+import {expect,test} from './account-fixture';
+import * as XLSX from 'xlsx';
+test('DuckDB evaluates advanced conditional expressions',async({page})=>{
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Region','Amount'],['N',10],['N',20],['S',90]]),'Data');
+ await page.goto('/');await expect(page.getByTestId('filtered-count')).toHaveText('180');
+ await page.getByLabel('Chọn dữ liệu Excel',{exact:true}).setInputFiles({name:'expressions.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(wb,{type:'buffer',bookType:'xlsx'})});
+ await expect(page.getByTestId('metric-total')).toHaveText('120');
+ const panel=page.getByRole('region',{name:'Pivot nâng cao',exact:true});
+ await panel.getByRole('button',{name:'Mở Pivot',exact:true}).click();
+ await panel.getByLabel('Loại chỉ số 1',{exact:true}).selectOption('expression');
+ await panel.getByLabel('Biểu thức chỉ số 1',{exact:true}).fill('IF([Amount] > 15, ABS([Amount] - 5) * 2, 0)');
+ await panel.getByRole('button',{name:'Thêm chỉ số Pivot',exact:true}).click();
+ await panel.getByLabel('Loại chỉ số 2',{exact:true}).selectOption('measure-expression');
+ await panel.getByLabel('Biểu thức chỉ số 2',{exact:true}).fill('@m1 / 2');
+ await panel.getByRole('button',{name:'Kiểm tra Pivot',exact:true}).click();
+ const matrix=panel.getByTestId('pivot-matrix'),alert=panel.getByRole('alert');
+ await expect(matrix.or(alert)).toBeVisible({timeout:30000});if(await alert.count())throw Error(await alert.innerText());
+ const row=matrix.getByRole('row').filter({has:page.getByRole('rowheader',{name:'Tổng cộng',exact:true})});
+ await expect(row.getByRole('cell').nth(0)).toHaveText('200,00');
+ await expect(row.getByRole('cell').nth(1)).toHaveText('100,00');
+ await panel.getByRole('button',{name:'Áp dụng Pivot',exact:true}).click();
+ await expect(matrix).toBeVisible();
+});
