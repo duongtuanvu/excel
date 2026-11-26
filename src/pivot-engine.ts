@@ -1,4 +1,5 @@
 import {compileReport,sqlText,LIMITS} from './model.ts';
+import {calculateFinancialPivot} from './pivot-financial.ts';
 import {applyPivotAnalytics} from './pivot-analytics.ts';
 import {applyTimeMeasures,calendarIndex} from './pivot-time.ts';
 import {parseExpression,compileExpression,evaluateExpression} from './pivot-expression.ts';
@@ -22,6 +23,7 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
  const pivot=validatePivot(config.pivot);
  if(!pivot)throw Error('PIVOT_INVALID: Chưa thiết lập Pivot.');
  validatePivotColumns(pivot,columns);
+ if(pivot.financialScale!==undefined&&config.filters.some(f=>['gt','gte','lt','lte'].includes(f.operator)))throw Error('PIVOT_DECIMAL_FILTER: Chế độ tài chính chưa hỗ trợ bộ lọc so sánh số DOUBLE. Hãy dùng bộ lọc văn bản hoặc bỏ điều kiện.');
  const from=compileReport(config,columns,table).from;
  const field=(name:string)=>{
   const c=columns.find(c=>c.name===name);
@@ -60,6 +62,7 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
   const row=Array.from(await query('SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (SELECT 1'+from+(from.includes(' WHERE ')?' AND ':' WHERE ')+'('+condition+') LIMIT 1) AS too_long'))[0] as Record<string,unknown>|undefined;
   if(Number(row?.n)!==0)throw Error('PIVOT_LABEL_LIMIT: Giá trị nhóm dài quá 240 ký tự.');
  }
+ if(pivot.financialScale!==undefined)return calculateFinancialPivot(pivot,field,from,r,c,rl,cl,nr,nc,query,sortAxis);
  const numeric=(name:string)=>'TRY_CAST('+field(name)+' AS DOUBLE)';
  const operand=(o:Operand)=>o.kind==='constant'?'CAST('+String(o.value)+' AS DOUBLE)':numeric(o.column);
  const expressions=new Map(pivot.measures.flatMap(m=>m.kind==='expression'||m.kind==='measure-expression'?[[m.id,parseExpression(m.formula,m.kind==='expression'?'row':'measure')] as const]:[]));

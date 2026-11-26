@@ -292,7 +292,7 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv', source:Manag
   const summary: Cell[][] = [head, ...report.groups.map(g => [...g.labels, g.value, g.count])];
   const name = 'kysheet-' + new Date().toISOString().slice(0,10);
   if (format === 'csv') {
-    const buffer = new TextEncoder().encode('\uFEFF' + (matrix??summary).map(row => row.map(safeCsvCell).join(',')).join('\r\n'));
+    const buffer = new TextEncoder().encode('\uFEFF' + (matrix??summary).map((row,i) => row.map((v,j)=>i>0&&matrix&&report.pivot?.exactValues&&j>=(1+(config.pivot?.rows.length??0))&&typeof v==='string'&&/^-?\d+(?:\.\d+)?$/.test(v)?'"'+v+'"':safeCsvCell(v)).join(',')).join('\r\n'));
     return { bytes: buffer.buffer as ArrayBuffer, name: name + '.csv', mime: 'text/csv;charset=utf-8' };
   }
   const raw = await connection.query(compileReport(config, source.columns, sourceTable(source.id)).raw);
@@ -312,6 +312,7 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv', source:Manag
       const cell=sheet[XLSX.utils.encode_cell({r:i,c:j})];
       if(cell?.t==='n'){const m=config.pivot.measures[(j-offset)%config.pivot.measures.length];cell.z='#,##0'+(m.decimals?'.'+'0'.repeat(m.decimals):'')+(effectivePivotFormat(m)==='percent'?'%':effectivePivotFormat(m)==='vnd'?' "₫"':'');}
     }
+    if(report.pivot?.exactValues)XLSX.utils.sheet_add_aoa(kpi,[['Pivot tài chính','Số thập phân chính xác lưu dạng văn bản; các sheet khác vẫn sử dụng DOUBLE.']],{origin:-1});
     XLSX.utils.book_append_sheet(book,sheet,'Pivot');
   }
   const bytes = XLSX.write(book, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer;

@@ -2,7 +2,7 @@
 export const EXPRESSION_LIMITS={length:2048,nodes:48,depth:10,sql:64000} as const;
 type Op='+'|'-'|'*'|'/';
 type Compare='='|'!='|'<'|'<='|'>'|'>=';
-export type Expr={kind:'constant';value:number}|{kind:'ref';name:string}|{kind:'binary';op:Op;left:Expr;right:Expr}|{kind:'neg'|'abs';arg:Expr}|{kind:'coalesce';left:Expr;right:Expr}|{kind:'if';op:Compare;left:Expr;right:Expr;yes:Expr;no:Expr};
+export type Expr={kind:'constant';value:number;literal?:string}|{kind:'ref';name:string}|{kind:'binary';op:Op;left:Expr;right:Expr}|{kind:'neg'|'abs';arg:Expr}|{kind:'coalesce';left:Expr;right:Expr}|{kind:'if';op:Compare;left:Expr;right:Expr;yes:Expr;no:Expr};
 export type ExpressionMode='row'|'measure';
 const invalid=(detail:string)=>Error('PIVOT_EXPRESSION_INVALID: '+detail);
 export function columnRef(name:string):string{return '['+name.replaceAll(']',']]')+']';}
@@ -33,7 +33,7 @@ export function parseExpression(input:unknown,mode:ExpressionMode):Expr{
    p+=m[0].length;return node({kind:'ref',name:m[0].slice(1)});
   }
   const numeric=/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?/.exec(s.slice(p));
-  if(numeric){p+=numeric[0].length;const value=Number(numeric[0]);if(!Number.isFinite(value)||Math.abs(value)>Number.MAX_SAFE_INTEGER)throw invalid('Hằng số ngoài giới hạn.');return node({kind:'constant',value});}
+  if(numeric){p+=numeric[0].length;const value=Number(numeric[0]);if(!Number.isFinite(value)||Math.abs(value)>Number.MAX_SAFE_INTEGER)throw invalid('Hằng số ngoài giới hạn.');return node({kind:'constant',value,literal:numeric[0]});}
   const token=/^[A-Za-z]+/.exec(s.slice(p));
   if(!token)throw invalid('Toán hạng không hợp lệ tại vị trí '+(p+1)+'.');
   p+=token[0].length;const fn=token[0].toUpperCase();
@@ -72,7 +72,7 @@ export function expressionRefs(e:Expr):string[]{
 export function printExpression(e:Expr,mode:ExpressionMode,rename:(name:string)=>string=(n=>n)):string{
  const print=(x:Expr)=>printExpression(x,mode,rename);
  switch(e.kind){
- case 'constant':return String(e.value);
+ case 'constant':return e.literal??String(e.value);
  case 'ref':return mode==='row'?columnRef(rename(e.name)):'@'+rename(e.name);
  case 'neg':return '-('+print(e.arg)+')';
  case 'abs':return 'ABS('+print(e.arg)+')';

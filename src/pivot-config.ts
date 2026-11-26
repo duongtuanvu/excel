@@ -25,9 +25,9 @@ export type TimeMeasure=MeasureBase&{kind:'time';measureId:string;operation:Time
 export type PivotMeasure=AggregateMeasure|RowMeasure|FormulaMeasure|ExpressionMeasure|MeasureExpression|TimeMeasure;
 export const isAdditive=(m:PivotMeasure)=>((m.kind==='aggregate'&&['sum','count'].includes(m.aggregate))||((m.kind==='row'||m.kind==='expression')&&m.aggregate==='sum'));
 export function isGrowth(m:PivotMeasure):boolean{return m.kind==='time'&&(m.operation==='growth'||m.operation==='yoy-growth');}
-export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean;topN?:{count:number;measureId:string};calendar?:CalendarGrain};
+export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean;topN?:{count:number;measureId:string};calendar?:CalendarGrain;financialScale?:number};
 export type PivotAxis={level:number;labels:(string|null)[]};
-export type PivotResult={rows:PivotAxis[];columns:PivotAxis[];values:(number|null)[][];ranked?:{shownLeaves:number;hiddenLeaves:number}};
+export type PivotResult={rows:PivotAxis[];columns:PivotAxis[];values:(number|null)[][];exactValues?:(string|null)[][];financialScale?:number;ranked?:{shownLeaves:number;hiddenLeaves:number}};
 export type PivotDrill={row:PivotAxis;column:PivotAxis;page:number;rows:(string|null)[][];columns:Column[];count:number};
 export const PIVOT_DRILL_PAGE=25;
 export const PIVOT_DRILL_TEXT=240;
@@ -56,6 +56,8 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
  if(v.version!==1||typeof v.subtotals!=='boolean'||!Array.isArray(v.rows)||v.rows.length>PIVOT_LIMITS.rowFields||!Array.isArray(v.columns)||v.columns.length>PIVOT_LIMITS.columnFields||!Array.isArray(v.measures)||!v.measures.length||v.measures.length>PIVOT_LIMITS.measures)throw err('Tối đa 3 trường hàng, 2 trường cột, 6 chỉ số.');
  const rows=v.rows.map(n=>text(n,240)),columns=v.columns.map(n=>text(n,240));
  if(new Set([...rows,...columns]).size!==rows.length+columns.length)throw err('Trường hàng/cột không được trùng.');
+ let financialScale:number|undefined;
+ if(v.financialScale!==undefined){if(typeof v.financialScale!=='number'||!Number.isInteger(v.financialScale)||v.financialScale<0||v.financialScale>6)throw err('Scale tài chính từ 0 đến 6.');financialScale=v.financialScale;}
  let calendar:CalendarGrain|undefined;
  if(v.calendar!==undefined){if(!['month','year'].includes(String(v.calendar))||columns.length!==1)throw err('Nhóm thời gian cần đúng một trường cột ngày.');calendar=v.calendar as CalendarGrain;}
  const ids=new Set<string>(),names=new Set<string>(),previous=new Map<string,PivotMeasure>();
@@ -97,7 +99,7 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
    if(!rows.length||typeof t.count!=='number'||!Number.isInteger(t.count)||t.count<1||t.count>100||typeof t.measureId!=='string'||!ids.has(t.measureId)||previous.get(t.measureId)?.kind==='time')throw err('Top N cần nhóm hàng, N từ 1–100 và chỉ số hợp lệ.');
    topN={count:t.count,measureId:t.measureId};
  }
- return {version:1,rows,columns,measures,subtotals:v.subtotals,...(topN?{topN}:{}),...(calendar?{calendar}:{})};
+ return {version:1,rows,columns,measures,subtotals:v.subtotals,...(topN?{topN}:{}),...(calendar?{calendar}:{}),...(financialScale!==undefined?{financialScale}:{})};
 }
 export function pivotReferences(pivot:PivotConfig):string[]{
  const refs=[...pivot.rows,...pivot.columns];
@@ -110,12 +112,13 @@ export function pivotReferences(pivot:PivotConfig):string[]{
 }
 export function validatePivotColumns(pivot:PivotConfig,columns:readonly Column[]):void{
  const names=new Map(columns.map(c=>[c.name,c.kind]));
+ const numeric=(n:string)=>names.get(n)==='number'||(pivot.financialScale!==undefined&&names.get(n)==='text');
  if(pivot.calendar&&names.get(pivot.columns[0])!=='date')throw Error('PIVOT_TIME_COLUMN: Cần chọn cột có kiểu ngày.');
  for(const n of pivotReferences(pivot))if(!names.has(n))throw new Error('PIVOT_COLUMN_MISSING: Không tìm thấy cột '+n+'.');
  for(const m of pivot.measures){
-   if(m.kind==='aggregate'&&!['count','distinct'].includes(m.aggregate)&&names.get(m.column)!=='number')throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần cột số.');
-   if(m.kind==='row')for(const o of [m.expression.left,m.expression.right])if(o.kind==='column'&&names.get(o.column)!=='number')throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
-   if(m.kind==='expression'&&expressionRefs(parseExpression(m.formula,'row')).some(n=>names.get(n)!=='number'))throw Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
+   if(m.kind==='aggregate'&&!['count','distinct'].includes(m.aggregate)&&!numeric(m.column))throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần cột số.');
+   if(m.kind==='row')for(const o of [m.expression.left,m.expression.right])if(o.kind==='column'&&!numeric(o.column))throw new Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
+   if(m.kind==='expression'&&expressionRefs(parseExpression(m.formula,'row')).some(n=>!numeric(n)))throw Error('PIVOT_TYPE_INVALID: '+m.name+' cần toán hạng số.');
  }
 }
 export function renamePivot(pivot:PivotConfig,lookup:(name:string)=>string):PivotConfig{
@@ -138,6 +141,7 @@ export function axisLabel(axis:PivotAxis,fields:number):string{
  return (axis.level<fields?'Tổng phụ · ':'')+values.join(' / ');
 }
 export function effectivePivotFormat(measure:PivotMeasure):PivotFormat{return measure.showAs||isGrowth(measure)?'percent':measure.format;}
+export function hasPivotFinancial(pivot?:PivotConfig):boolean{return pivot?.financialScale!==undefined;}
 export function hasPivotAdvanced(pivot?:PivotConfig):boolean{return !!pivot&&(!!pivot.calendar||pivot.measures.some(m=>m.kind==='expression'||m.kind==='measure-expression'||m.kind==='time'));}
 export function hasPivotAnalytics(pivot?:PivotConfig):boolean{return !!pivot&&(!!pivot.topN||pivot.measures.some(m=>!!m.showAs));}
 export function pivotFormat(value:number|null,measure:PivotMeasure):string{
@@ -149,5 +153,5 @@ export function pivotMatrix(pivot:PivotConfig,result:PivotResult):(string|number
  const suffix=(m:PivotMeasure)=>m.kind==='time'?' ('+TIME_LABELS[m.operation]+(isGrowth(m)?'; 1=100%':'')+')':m.showAs?' (% '+(m.showAs==='grand'?'tổng chung':m.showAs==='row'?'tổng hàng':'tổng cột')+'; 1=100%)':'';
  const totalSuffix=pivot.topN?' (toàn bộ sau lọc)':'';
  return [['Cấp hàng',...pivot.rows,...result.columns.flatMap(a=>pivot.measures.map(m=>axisLabel(a,pivot.columns.length)+' · '+m.name+suffix(m)))],
- ...result.rows.map((a,i)=>[a.level===0?'Tổng cộng'+totalSuffix:a.level<pivot.rows.length?'Tổng phụ'+totalSuffix:'Chi tiết',...pivot.rows.map((_,j)=>j<a.level?a.labels[j]:null),...result.values[i]])];
+ ...result.rows.map((a,i)=>[a.level===0?'Tổng cộng'+totalSuffix:a.level<pivot.rows.length?'Tổng phụ'+totalSuffix:'Chi tiết',...pivot.rows.map((_,j)=>j<a.level?a.labels[j]:null),...(result.exactValues?.[i]??result.values[i])])];
 }

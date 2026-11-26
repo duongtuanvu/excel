@@ -1,0 +1,24 @@
+import {expect,test} from './account-fixture';
+import * as XLSX from 'xlsx';
+import {readFileSync} from 'node:fs';
+test('financial pivot computes exact decimals and exports text cells',async({page},testInfo)=>{
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Region','Amount'],['N',0.1],['N',0.2],['S',0.3]]),'Data');
+ await page.goto('/');await expect(page.getByTestId('filtered-count')).toHaveText('180');
+ await page.getByLabel('Chọn dữ liệu Excel',{exact:true}).setInputFiles({name:'financial.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(wb,{type:'buffer',bookType:'xlsx'})});
+ await expect(page.getByTestId('filtered-count')).toHaveText('3');
+ const panel=page.getByRole('region',{name:'Pivot nâng cao',exact:true});
+ await panel.getByRole('button',{name:'Mở Pivot',exact:true}).click();
+ await panel.getByLabel('Chế độ tính toán Pivot',{exact:true}).selectOption('2');
+ await panel.getByRole('button',{name:'Kiểm tra Pivot',exact:true}).click();
+ const matrix=panel.getByTestId('pivot-matrix'),alert=panel.getByRole('alert');
+ await expect(matrix.or(alert)).toBeVisible({timeout:30000});if(await alert.count())throw Error(await alert.innerText());
+ const grand=matrix.getByRole('row').filter({has:page.getByRole('rowheader',{name:'Tổng cộng',exact:true})});
+ await expect(grand.getByRole('cell')).toHaveText('0,60');
+ await panel.getByRole('button',{name:'Áp dụng Pivot',exact:true}).click();
+ await expect(grand.getByRole('cell')).toHaveText('0,60');
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Xuất Excel',exact:true}).click();
+ const path=testInfo.outputPath('financial.xlsx');await (await download).saveAs(path);
+ const out=XLSX.read(readFileSync(path),{type:'buffer'});
+ const data=XLSX.utils.sheet_to_json(out.Sheets.Pivot,{header:1}) as unknown[][];
+ expect(data.find(r=>r[0]==='Tổng cộng')?.at(-1)).toBe('0.60');
+});

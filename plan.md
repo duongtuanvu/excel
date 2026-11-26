@@ -472,3 +472,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source bounded expression parser, arithmetic/IF/ABS/COALESCE, row/aggregate references, safe SQL compilation and schema rename support.
 - [x] Source calendar month/year, exact previous/YoY, change/growth and additive filtered YTD; date validation, export format and drill scope. UI editor and account capability protection.
 - [ ] CI/auto release and production smoke test. Fiscal dates, rolling periods, dense date series and exact DECIMAL remain future work.
+
+### Financial Pivot v0.7.3
+- [x] v0.7.2 CI 45798666483: 59 unit/integration + 24 E2E passed; main 4c29b55 verified.
+- [x] Fixed-point BigInt Pivot aggregation, expressions, exact ranking/ratios/calendar, bounded batches and distinct sets, source validation and explicit rounding.
+- [x] Financial mode editor, exact string export and account capability gate. Other report KPIs and pipeline numeric transforms remain DOUBLE, numeric comparison filters blocked. High precision input requires text schema from original workbook.
+- [ ] CI/merge/production verification.
