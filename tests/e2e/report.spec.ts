@@ -1,0 +1,32 @@
+import { expect, test } from '@playwright/test';
+import * as XLSX from 'xlsx';
+
+test('demo, import, filter, template, workbook export', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('filtered-count')).toHaveText('180');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Region','Amount'],['North',10],['South',20],['North',-5]]),'Sales');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Region','Amount'],['North',100]]),'Other');
+  const buffer = XLSX.write(wb,{type:'buffer',bookType:'xlsx'});
+  await page.getByLabel('Chọn dữ liệu Excel').setInputFiles({name:'fixture.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer});
+  await expect(page.getByTestId('metric-total')).toHaveText('25');
+  await expect(page.getByTestId('filtered-count')).toHaveText('3');
+  await page.getByRole('button',{name:'Thêm điều kiện'}).click();
+  await page.getByLabel('Giá trị lọc 1').fill('North');
+  await expect(page.getByTestId('metric-total')).toHaveText('5');
+  await expect(page.getByTestId('filtered-count')).toHaveText('2');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button',{name:'Xuất Excel'}).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  const exported = XLSX.readFile(path!);
+  expect(exported.SheetNames).toEqual(['Tổng quan','Tổng hợp','Dữ liệu đã lọc']);
+  const rows = XLSX.utils.sheet_to_json(exported.Sheets['Tổng hợp'],{header:1});
+  expect(rows).toContainEqual(['North',5,2]);
+  await page.getByLabel('Sheet',{exact:true}).selectOption('Other');
+  await expect(page.getByTestId('metric-total')).toHaveText('100');
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
