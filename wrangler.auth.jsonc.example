@@ -1,0 +1,22 @@
+{
+  // Copy to wrangler.jsonc and replace the placeholders before staging deploy.
+  "name": "kysheet-auth-staging",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-26",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "APP_ORIGIN": "https://REPLACE-WITH-STAGING-HOST",
+    "GOOGLE_CLIENT_ID": "REPLACE-WITH-GOOGLE-OAUTH-CLIENT-ID"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "kysheet-auth-staging",
+    "database_id": "REPLACE-WITH-D1-DATABASE-ID",
+    "migrations_dir": "migrations"
+  }]
+}

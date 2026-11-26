@@ -3,7 +3,9 @@ import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { EngineClient } from './worker-client';
 import UserCenter from './UserCenter';
 import { initials } from './user-model';
-import { readLocalUser, writeLocalUser, clearLocalUser } from './user-storage';
+import type { AccountSnapshot, AccountSettings } from './account-model';
+import { defaultSettings } from './account-model';
+import type { LocalUser } from './user-model';
 import { LIMITS, AGGREGATIONS, OPERATORS, defaultConfig, reconcileConfig, validateTemplate } from './model';
 import type { Aggregate, Cell, Column, Config, Filter, Group, Operator, Report, Source } from './model';
 
@@ -86,11 +88,19 @@ function Pager({ page, total, onChange, disabled = false }: { page: number; tota
   </div></div>;
 }
 
-export default function App() {
+export default function App({ session, saveSettings, refreshSettings, logout, saving }: {
+  session: AccountSnapshot;
+  saveSettings: (settings: AccountSettings) => Promise<void>;
+  refreshSettings: () => Promise<void>;
+  logout: () => Promise<void>;
+  saving: boolean;
+}) {
   const client = useRef<EngineClient | null>(null);
   const fileInput = useRef<HTMLInputElement>(null), templateInput = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
-  const [user, setUser] = useState(readLocalUser);
+  const user = { data: session.settings, warning: '' };
+  const [accountBusy, setAccountBusy] = useState(false);
+  const restored = useRef(false);
   const [userOpen, setUserOpen] = useState(false);
   const userButton = useRef<HTMLButtonElement>(null);
   const [source, setSource] = useState<Source | null>(null);
@@ -103,7 +113,7 @@ export default function App() {
   const [tab, setTab] = useState<'summary'|'raw'>('summary');
   const [dragging, setDragging] = useState(false), [configOpen, setConfigOpen] = useState(true);
   const result = snapshot && snapshot.source === source && snapshot.config === config && snapshot.requestedPage === page ? snapshot.report : null;
-  const locked = Boolean(busy);
+  const locked = Boolean(busy) || saving || accountBusy;
   const columns = source?.columns || [];
   const numericColumns = columns.filter(c => c.kind === 'number');
 
@@ -116,7 +126,14 @@ export default function App() {
     engine.request('demo', null).then(s => {
       if (!active) return;
       setSource(s);
-      setConfig({ ...defaultConfig(s.columns), title: 'Tổng quan kinh doanh', groups: ['Khu vực'], metric: 'Doanh thu', aggregate: 'sum' });
+      const saved = session.settings.lastConfig;
+      const mapped = saved ? reconcileConfig(saved, s.columns) : null;
+      if (mapped && !mapped.missing.length) {
+        setConfig(mapped.config); restored.current = true;
+      } else {
+        setConfig({ ...defaultConfig(s.columns), title: 'Tổng quan kinh doanh', groups: ['Khu vực'], metric: 'Doanh thu', aggregate: 'sum' });
+        if (saved) setNotice('Có cấu hình đã lưu. Import đúng file Excel để khôi phục.');
+      }
     }).catch(e => { if (active) setError(errorText(e)); }).finally(() => {
       if (active) { busyRef.current = false; setBusy(''); }
     });
@@ -153,6 +170,14 @@ export default function App() {
     if (demo) {
       setConfig({ ...defaultConfig(next.columns), title: 'Tổng quan kinh doanh', groups: ['Khu vực'], metric: 'Doanh thu', aggregate: 'sum' });
     } else if (source) {
+      const saved = session.settings.lastConfig;
+      if (!restored.current && saved) {
+        const previous = reconcileConfig(saved, next.columns);
+        if (!previous.missing.length) {
+          setConfig(previous.config); restored.current = true;
+          setNotice('Đã khôi phục cấu hình của tài khoản.'); return;
+        }
+      }
       const mapped = reconcileConfig(config, next.columns);
       if (mapped.missing.length) {
         setConfig(defaultConfig(next.columns));
@@ -198,6 +223,16 @@ export default function App() {
     } catch (e) { setError(errorText(e)); }
     finally { busyRef.current = false; setBusy(''); }
   }
+  async function accountAction(action: () => Promise<void>, message: string) {
+    if (busyRef.current || saving || accountBusy) return;
+    setAccountBusy(true); setError(''); setNotice('');
+    try { await action(); setNotice(message); }
+    catch (e) { setError(errorText(e)); }
+    finally { setAccountBusy(false); }
+  }
+  async function persistProfile(next: LocalUser) {
+    await saveSettings({ ...next, lastConfig: session.settings.lastConfig });
+  }
   function onDrop(e: DragEvent<HTMLButtonElement>) {
     e.preventDefault(); setDragging(false);
     if (!locked) importFile(e.dataTransfer.files[0]);
@@ -209,17 +244,20 @@ export default function App() {
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.3</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.4</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
-          <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Hồ sơ local</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
+          <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
         </button></div>
     </header>
     {userOpen && <UserCenter
       state={user}
       config={source && result && !locked ? config : null}
-      onSave={next => setUser(writeLocalUser(next))}
-      onReset={() => setUser(clearLocalUser())}
+      onSave={persistProfile}
+      onReset={() => saveSettings(defaultSettings(session.settings.profile.displayName))}
+      accountEmail={session.account.email}
+      saving={saving}
+      onLogout={logout}
       onApply={next => {
         if (!source || busyRef.current) throw new Error('Chưa có nguồn dữ liệu sẵn sàng.');
         const mapped = reconcileConfig(next, source.columns);
@@ -265,7 +303,16 @@ export default function App() {
             {!!config.filters.length && <button className="button text-button" onClick={() => patch({filters:[]})}>Xóa tất cả bộ lọc</button>}
           </Panel>
           <Panel title="Mẫu báo cáo" icon="layers">
-            <p className="muted small-text">Lưu cấu hình JSON, không lưu nội dung Excel.</p><div className="two-buttons"><button className="button" onClick={() => templateInput.current?.click()}><Icon name="upload" size={15}/> Mở mẫu</button><button className="button" onClick={() => download(JSON.stringify({version:1,config},null,2),'kysheet-template.json','application/json')}><Icon name="download" size={15}/> Lưu mẫu</button></div>
+            <p className="muted small-text">Lưu cấu hình vào tài khoản để dùng lại trên thiết bị khác; không lưu workbook. Tên cột và giá trị bộ lọc có thể nhạy cảm.</p>
+            <button className="button primary" disabled={!result || locked} onClick={() => void accountAction(() => saveSettings({...session.settings,lastConfig:config}), 'Đã lưu cấu hình vào tài khoản.')}>Lưu cấu hình tài khoản</button>
+            <button className="button" disabled={!session.settings.lastConfig || locked} onClick={() => {
+              const saved=session.settings.lastConfig;
+              if (!saved || !source) return;
+              const mapped=reconcileConfig(saved,source.columns);
+              if (mapped.missing.length) { setError('Cấu hình đã lưu không khớp cột: '+mapped.missing.join(', ')); return; }
+              setConfig(mapped.config); setPage(0); setGroupPage(0); setNotice('Đã áp dụng cấu hình tài khoản.');
+            }}>Khôi phục cấu hình đã lưu</button>
+            <button className="button text-button" disabled={locked} onClick={() => void accountAction(refreshSettings, 'Đã tải lại hồ sơ và mẫu từ tài khoản.')}>Tải lại cấu hình từ server</button><div className="two-buttons"><button className="button" onClick={() => templateInput.current?.click()}><Icon name="upload" size={15}/> Mở mẫu</button><button className="button" onClick={() => download(JSON.stringify({version:1,config},null,2),'kysheet-template.json','application/json')}><Icon name="download" size={15}/> Lưu mẫu</button></div>
           </Panel>
         </fieldset>
         <div className="sidebar-footer"><Icon name="shield" size={19}/><span><strong>Dữ liệu thuộc về bạn</strong><small>Không gửi file lên máy chủ.</small></span></div>
@@ -295,7 +342,7 @@ export default function App() {
             </tbody><tfoot><tr><th colSpan={Math.max(1, config.groups.length)}>Tổng hợp toàn bộ</th><th className="numeric">{display(result.total)}</th><th className="numeric">{fmt.format(result.filtered)}</th></tr></tfoot></table></div><Pager page={groupPage} total={groups.length} onChange={setGroupPage}/></> :
             <><div className="table-scroll"><table><thead><tr><th>#</th>{columns.map(c => <th key={c.id}>{c.name}<small className="column-type">{kindNames[c.kind]}</small></th>)}</tr></thead><tbody>{result.preview.map((row,i) => <tr key={i}><td className="row-number">{result.page*LIMITS.page+i+1}</td>{row.map((v,j) => <td key={j} className={columns[j]?.kind === 'number' ? 'numeric' : ''}>{display(v)}</td>)}</tr>)}{!result.preview.length && <tr><td colSpan={columns.length+1} className="empty-cell">Không có dữ liệu phù hợp.</td></tr>}</tbody></table></div><Pager page={result.page} total={result.filtered} onChange={setPage} disabled={locked || loading}/></> : <div className="empty">{loading || busy ? 'Đang tải dữ liệu…' : 'Chưa có dữ liệu để hiển thị.'}</div>}
         </section>
-        <footer className="footer"><span>KySheet · React + DuckDB-Wasm</span><span>Không cần backend · Mẫu báo cáo JSON</span></footer>
+        <footer className="footer"><span>KySheet · React + DuckDB-Wasm</span><span>Cấu hình theo tài khoản · Xử lý Excel local</span></footer>
       </main>
     </div>
   </div>;

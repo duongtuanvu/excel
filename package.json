@@ -1,6 +1,6 @@
 {
   "name": "kysheet",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:e2e": "playwright test",
-    "build:local": "tsc --noEmit && vite build --mode local-assets"
+    "build:local": "tsc --noEmit && vite build --mode local-assets",
+    "dev:auth": "wrangler dev --local --https",
+    "deploy:auth": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "1.30.0",
@@ -27,6 +29,7 @@
     "typescript": "5.9.2",
     "vite": "6.4.4",
     "@vitejs/plugin-react": "4.7.0",
-    "@types/node": "22.15.30"
+    "@types/node": "22.15.30",
+    "wrangler": "4.54.0"
   }
 }
