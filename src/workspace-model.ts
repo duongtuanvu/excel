@@ -2,9 +2,11 @@ import { LIMITS, compileReport, validateTemplate } from './model.ts';
 import type { Column, Config, Kind } from './model.ts';
 import { WORKSPACE_LIMITS, normalizeAlias } from './source-model.ts';
 import type { ManagedSource } from './source-model.ts';
+import { validateSchema, modeKind } from './schema-model.ts';
+import type { SchemaRule } from './schema-model.ts';
 
 export type SavedColumn = Pick<Column,'name'|'kind'>;
-export type SavedSource = {id:string;alias:string;sheet:string;columns:SavedColumn[];config:Config};
+export type SavedSource = {id:string;alias:string;sheet:string;columns:SavedColumn[];config:Config;schema?:SchemaRule[]};
 export type SavedWorkspace = {version:1;slots:SavedSource[]};
 const kinds:readonly Kind[]=['number','text','date','boolean'];
 const record=(v:unknown):Record<string,unknown>=>{
@@ -32,7 +34,12 @@ export function validateSavedSource(input:unknown):SavedSource{
   const config=validateTemplate({version:1,config:s.config}).config;
   // Validate referenced columns, aggregation and numeric filters without executing SQL.
   compileReport(config,columns.map((c,i)=>({...c,id:'c'+i})));
-  return {id,alias,sheet,columns,config};
+  const schema=validateSchema(s.schema);
+  for(const rule of schema){
+    const target=columns.find(c=>c.name===rule.name),kind=modeKind(rule.mode);
+    if(!target||(kind&&target.kind!==kind))throw new Error('WORKSPACE_SCHEMA_INVALID: Quy tắc cột không khớp schema đã lưu.');
+  }
+  return {id,alias,sheet,columns,config,...(schema.length?{schema}:{})};
 }
 export function validateWorkspace(input:unknown):SavedWorkspace|null{
   if(input==null)return null; // Old account payloads are supported.
@@ -53,7 +60,7 @@ export function snapshotWorkspace(previous:SavedWorkspace|null, sources:readonly
   const slots=loaded.map(source=>{
     const config=configFor(source);
     if(!config)throw new Error('WORKSPACE_CONFIG_MISSING: Không tìm thấy cấu hình của '+source.alias+'.');
-    return {id:source.slotId,alias:source.alias,sheet:source.sheet,columns:source.columns.map(({name,kind})=>({name,kind})),config};
+    return {id:source.slotId,alias:source.alias,sheet:source.sheet,columns:source.columns.map(({name,kind})=>({name,kind})),config,...(source.schema?.length?{schema:source.schema}:{})};
   });
   const loadedIds=new Set(slots.map(s=>s.id));
   // Never discard a saved source just because its workbook has not been reattached yet.

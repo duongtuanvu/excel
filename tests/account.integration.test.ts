@@ -135,3 +135,15 @@ test('workspace persists per account, legacy profile saves preserve it, and expl
     assert.equal((await get(a)).settings.workspace,null);
   }finally{f.close();}
 });
+
+test('schema-capable clients save rules; old clients cannot erase them',async()=>{
+ const f=fixture();try{
+ const a=await f.user('a'),settings=defaultSettings('A');
+ settings.workspace={version:1,slots:[{id:crypto.randomUUID(),alias:'Sales',sheet:'Sales',columns:[{name:'Revenue',kind:'number'}],config:{title:'Report',groups:[],metric:'Revenue',aggregate:'sum',filters:[],chart:'bar',sort:'desc'},schema:[{sourceName:'Amount',name:'Revenue',mode:'number-vi'}]}]};
+ const save=(revision:number,value:unknown,capable:boolean)=>f.request('/api/settings',{method:'PUT',headers:{Cookie:a,Origin:origin,'Content-Type':'application/json','X-KySheet-User':'a',...(capable?{'X-KySheet-Schema':'1'}:{})},body:JSON.stringify({revision,settings:value})});
+ assert.equal((await save(0,settings,true)).status,200);
+ const denied=await save(1,defaultSettings('Old'),false);assert.equal(denied.status,409);assert.equal((await denied.json()).code,'SETTINGS_CLIENT_UPGRADE');
+ const loaded=await (await f.request('/api/session',{headers:{Cookie:a}})).json();assert.deepEqual(loaded.settings.workspace,settings.workspace);
+ assert.equal((await save(1,defaultSettings('Reset'),true)).status,200);
+ }finally{f.close();}
+});

@@ -2,6 +2,7 @@ import type { Config, Report } from './model';
 import type { Workspace } from './source-model';
 import type { SavedSource } from './workspace-model';
 import type { SourceProfile, Distribution } from './profile-model';
+import type { SchemaRule, SchemaPreview } from './schema-model';
 type SourceVersion={sourceId:string;revision:number};
 export type Requests={
   demo:{input:null;output:Workspace};
@@ -12,6 +13,8 @@ export type Requests={
   removeSource:{input:{sourceId:string};output:Workspace};
   replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
   restoreSource:{input:{slot:SavedSource;name:string;bytes:ArrayBuffer};output:Workspace};
+  previewSchema:{input:SourceVersion&{rules:SchemaRule[];config:Config};output:SchemaPreview};
+  applySchema:{input:SourceVersion&{rules:SchemaRule[];config:Config};output:{workspace:Workspace;config:Config}};
   profile:{input:SourceVersion;output:SourceProfile};
   distribution:{input:SourceVersion&{columnId:string};output:Distribution};
   report:{input:SourceVersion&{config:Config;page:number};output:Report};

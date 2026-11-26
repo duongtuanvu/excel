@@ -35,6 +35,14 @@ async function api(request: Request, env: Env): Promise<Response> {
       settings = validateSettings(input.settings);
       legacyWrite = !Object.hasOwn(input.settings as object, 'workspace');
     } catch { return json({ code: 'SETTINGS_INVALID', error: 'Cấu hình hoặc dung lượng dữ liệu không hợp lệ.' }, 400); }
+    // Old clients strip schema rules on serialization. Reject their writes once rules exist.
+    // Read by revision, then retain the existing CAS and session predicate for the update.
+    if (request.headers.get('X-KySheet-Schema') !== '1') {
+      const current = await env.DB.prepare('SELECT payload FROM user_settings WHERE user_id=? AND revision=?').bind(active.id,revision).first<{payload:string}>();
+      if (current && parseSettings(current.payload).workspace?.slots.some(slot=>slot.schema?.length)) {
+        return json({code:'SETTINGS_CLIENT_UPGRADE',error:'Ứng dụng đã được nâng cấp. Hãy tải lại trang trước khi lưu cấu hình.'},409);
+      }
+    }
     // Older clients do not know workspace. Keep the stored workspace on legacy writes.
     if (legacyWrite) {
       const current = await env.DB.prepare('SELECT payload FROM user_settings WHERE user_id=? AND revision=?').bind(active.id, revision).first<{payload:string}>();

@@ -10,6 +10,8 @@ import { validateSavedSource } from './workspace-model';
 import type { SavedSource } from './workspace-model';
 import type { SourceProfile } from './profile-model';
 import { profileSource, profileDistribution } from './profile-engine';
+import { convertSchemaCell, resolveSchema, remapSchemaConfig } from './schema-model';
+import type { SchemaRule, SchemaPreview, SchemaIssue } from './schema-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -104,7 +106,7 @@ function asCell(value: unknown, kind: Kind): Cell {
 }
 const quoted = (v: Cell) => v === null ? '""' : '"' + String(v).replaceAll('"', '""') + '"';
 
-function prepare(book: XLSX.WorkBook, sheet: string, name: string) {
+function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaRule[]=[], buildCsv=true) {
   if (!book.SheetNames.includes(sheet)) throw new Error('Không tìm thấy sheet.');
   const ws = book.Sheets[sheet];
   if (!ws || !ws['!ref']) throw new Error('Sheet không có dữ liệu.');
@@ -116,23 +118,40 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string) {
   if (!matrix.length) throw new Error('Không có hàng tiêu đề.');
   const headers = normalizeHeaders(Array.from({ length: width }, (_, i) => matrix[0][i]));
   const data = matrix.slice(1);
-  const columns: Column[] = headers.map((name, i) => ({ id: 'c' + i, name, kind: kindFor(data.map(row => row[i])) }));
-  const csv: string[] = [columns.map(c => c.id).join(',')];
-  let count = 0, chars = csv[0].length;
-  for (const row of data) {
-    const cells = columns.map((c, i) => asCell(row[i], c.kind));
-    if (cells.every(v => v === null)) continue;
-    const line = cells.map(quoted).join(',');
-    chars += line.length + 1;
-    if (chars > 40_000_000) throw new Error('Dữ liệu sau giải nén quá lớn. Hãy chia nhỏ sheet.');
-    csv.push(line); count++;
+  const originalColumns:Column[]=headers.map((name,i)=>({id:'c'+i,name,kind:kindFor(data.map(row=>row[i]))}));
+  const resolved=resolveSchema(originalColumns,rules);
+  const columns=resolved.columns, schema=resolved.rules.filter(r=>r.mode!=='auto'||r.name!==r.sourceName);
+  const byName=new Map(schema.map(r=>[r.sourceName,r]));
+  const modes=originalColumns.map(c=>byName.get(c.name)?.mode??'auto');
+  const invalid=new Uint32Array(columns.length);
+  const csv:string[]=[columns.map(c=>c.id).join(',')];
+  let count=0,chars=csv[0].length;
+  for(const row of data){
+    // Keep the original row eligibility; conversion must not silently remove a row.
+    const original=originalColumns.map((c,i)=>asCell(row[i],c.kind));
+    if(original.every(v=>v===null))continue;
+    const cells=columns.map((c,i)=>{
+      const mode=modes[i];
+      if(mode==='auto')return original[i];
+      const value=convertSchemaCell(row[i],mode);
+      if(value===undefined){invalid[i]++;return null;}
+      return value;
+    });
+    const line=cells.map(quoted).join(',');
+    chars+=line.length+1;
+    if(chars>40_000_000)throw new Error('SOURCE_MEMORY_LIMIT: Dữ liệu sau giải nén quá lớn. Hãy chia nhỏ sheet.');
+    if(buildCsv)csv.push(line);
+    count++;
   }
-  return { csv: csv.join('\n'), next: { name, sheets: [...book.SheetNames], sheet, rows: count, columns } satisfies Source };
+  const issues:SchemaIssue[]=originalColumns.flatMap((c,i)=>invalid[i]?[{sourceName:c.name,name:columns[i].name,invalid:invalid[i]}]:[]);
+  return {csv:buildCsv?csv.join('\n'):'',next:{name,sheets:[...book.SheetNames],sheet,rows:count,columns} satisfies Source,originalColumns,schema,issues,chars};
 }
 
-async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,restore?:SavedSource):Promise<Workspace>{
-  const {csv,next}=prepare(book.data,sheet,book.name);
-  if(previous||restore){
+async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,restore?:SavedSource,edit?:ReturnType<typeof prepare>):Promise<Workspace>{
+  const prepared=edit??prepare(book.data,sheet,book.name,previous?.source.schema??restore?.schema??[]);
+  const {csv,next,originalColumns,schema,issues}=prepared;
+  if(issues.length)throw new Error('SCHEMA_CONVERSION_FAILED: '+issues.map(i=>i.name+' ('+i.invalid+' lỗi)').join(', ')+'. Nguồn cũ được giữ nguyên.');
+  if(!edit&&(previous||restore)){
     const issues=replacementIssues(previous?.source.columns??restore!.columns,next.columns);
     if(issues.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+issues.join(', ')+'. Nguồn cũ được giữ nguyên.');
   }
@@ -148,7 +167,7 @@ async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,rest
   const slotId=previous?.source.slotId??restore?.id??crypto.randomUUID();
   if(remaining.some(e=>e.source.slotId===slotId))throw new Error('WORKSPACE_SLOT_LOADED: Nguồn này đã được mở.');
   if(restore)compileReport(restore.config,next.columns,sourceTable(id));
-  const managed:ManagedSource={...next,id,slotId,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo};
+  const managed:ManagedSource={...next,id,slotId,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo,originalColumns,...(schema.length?{schema}:{})};
   const table=sourceTable(id), {db,conn}=await connect(), path='report_import.csv';
   await conn.query('DROP TABLE IF EXISTS report_stage');
   try {
@@ -257,6 +276,13 @@ async function getProfile(item:Entry):Promise<SourceProfile>{
     throw new Error('PROFILE_QUERY_FAILED: Không thể hoàn tất thống kê. Hãy thử chia nhỏ nguồn dữ liệu.');
   }
 }
+function schemaCandidate(item:Entry,rules:SchemaRule[],config:Config,buildCsv:boolean){
+  const source=item.source,book=bookFor(source);
+  const prepared=prepare(book.data,source.sheet,book.name,rules,buildCsv);
+  const mapped=remapSchemaConfig(config,source.columns,prepared.next.columns);
+  if(prepared.next.rows!==source.rows)throw new Error('SCHEMA_ROW_MISMATCH: Số dòng thay đổi ngoài dự kiến.');
+  return {book,prepared,mapped};
+}
 async function handle(req: Request):Promise<unknown>{
   switch(req.type){
     case 'demo':{
@@ -303,6 +329,19 @@ async function handle(req: Request):Promise<unknown>{
       const item=entry(req.input.sourceId,req.input.revision);
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
+    }
+    case 'previewSchema':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
+      const {prepared,mapped}=schemaCandidate(item,req.input.rules,req.input.config,false);
+      return {sourceId:item.source.id,revision:item.source.revision,columns:prepared.next.columns,issues:prepared.issues,rows:prepared.next.rows,config:mapped} satisfies SchemaPreview;
+    }
+    case 'applySchema':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
+      const {book,prepared,mapped}=schemaCandidate(item,req.input.rules,req.input.config,true);
+      const ws=await store(book,item.source.sheet,item,undefined,undefined,prepared);
+      return {workspace:ws,config:mapped};
     }
     case 'profile':return getProfile(entry(req.input.sourceId,req.input.revision));
     case 'distribution':{

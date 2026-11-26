@@ -5,6 +5,8 @@ import UserCenter from './UserCenter';
 import SourceManager from './SourceManager';
 import SavedWorkspacePanel from './SavedWorkspacePanel';
 import ProfilePanel from './ProfilePanel';
+import SchemaPanel from './SchemaPanel';
+import type { SchemaRule, SchemaPreview } from './schema-model';
 import type { Distribution, SourceProfile } from './profile-model';
 import { snapshotWorkspace, withoutSavedSource } from './workspace-model';
 import type { SavedSource } from './workspace-model';
@@ -182,6 +184,16 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     return runProfile(e=>e.request('distribution',{sourceId:target.id,revision:target.revision,columnId}));
   }
 
+  function previewSchema(target:ManagedSource,rules:SchemaRule[]):Promise<SchemaPreview>{
+    return runProfile(e=>e.request('previewSchema',{sourceId:target.id,revision:target.revision,rules,config}));
+  }
+  async function applySchema(target:ManagedSource,rules:SchemaRule[]){
+    await runProfile(async e=>{
+      const result=await e.request('applySchema',{sourceId:target.id,revision:target.revision,rules,config});
+      applyWorkspace(result.workspace,undefined,result.config);
+      setNotice('Đã áp dụng cấu trúc cột.');
+    });
+  }
   function patch(partial: Partial<Config>) {
     setConfig(current => ({ ...current, ...partial }));
     setPage(0); setGroupPage(0);
@@ -193,13 +205,14 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   function filterPatch(i: number, update: Partial<Filter>) {
     patch({ filters: config.filters.map((f,j) => j === i ? {...f,...update} : f) });
   }
-  function applyWorkspace(ws: Workspace, attached?: SavedSource) {
+  function applyWorkspace(ws: Workspace, attached?: SavedSource, editedConfig?:Config) {
     if (source) sourceConfigs.current.set(source.id, config);
     const live = new Set(ws.sources.map(s => s.id));
     for (const id of sourceConfigs.current.keys()) if (!live.has(id)) sourceConfigs.current.delete(id);
     const next = ws.active;
     setSources(ws.sources); setSource(next); setSnapshot(null); setPage(0); setGroupPage(0);
     if (!next) { setConfig(defaultConfig([])); return; }
+    if(editedConfig){setConfig(editedConfig);sourceConfigs.current.set(next.id,editedConfig);return;}
     if (attached && next.slotId === attached.id) {
       setConfig(attached.config); restored.current = true;
       setNotice('Đã khôi phục nguồn '+attached.alias+' và cấu hình báo cáo.'); return;
@@ -307,7 +320,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.2</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.3</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -406,6 +419,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <section className="report-card chart-card"><div className="card-heading"><div><h2>Phân tích theo nhóm</h2><p>{label} · {aggregateLabel} · tối đa 12 nhóm đầu</p></div><div className="segmented" aria-label="Kiểu biểu đồ"><button className={config.chart === 'horizontal' ? 'active' : ''} aria-pressed={config.chart === 'horizontal'} disabled={locked} onClick={() => patch({chart:'horizontal'})}>Thanh</button><button className={config.chart === 'bar' ? 'active' : ''} aria-pressed={config.chart === 'bar'} disabled={locked} onClick={() => patch({chart:'bar'})}>Cột</button></div></div>
           {result ? <Chart groups={groups} mode={config.chart}/> : <div className="empty">{loading || busy ? <><span className="spinner"/> Đang tính báo cáo…</> : 'Chưa có kết quả.'}</div>}
         </section>
+        {source&&<SchemaPanel key={'schema:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewSchema} onApply={applySchema}/>}
         {source&&<ProfilePanel key={source.id+':'+source.revision} source={source} disabled={locked} onProfile={loadProfile} onDistribution={loadDistribution}/>}
         <section className="report-card table-card"><div className="card-heading"><div><h2>Chi tiết dữ liệu</h2><p>Kiểm tra kết quả và dữ liệu nguồn đã lọc</p></div><span className="table-tag"><Icon name="grid" size={15}/> {source ? columns.length : 0} cột</span></div>
           <div className="tabs" role="tablist" aria-label="Bảng dữ liệu"><button role="tab" aria-selected={tab === 'summary'} className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>Bảng tổng hợp</button><button role="tab" aria-selected={tab === 'raw'} className={tab === 'raw' ? 'active' : ''} onClick={() => setTab('raw')}>Dữ liệu nguồn</button></div>

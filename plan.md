@@ -112,7 +112,8 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 - [x] 03.04a Source mở nhiều sheet độc lập từ một workbook, tránh parse lại workbook khi chuyển nguồn.
 - [ ] 03.04b CSV/TSV encoding, delimiter, preview có xác nhận.
 - [ ] 03.05 Chọn hàng header, vùng dữ liệu, bỏ dòng tiêu đề phụ và dòng tổng; hỗ trợ merge-cell có quy tắc rõ.
-- [ ] 03.06 Schema editor: đổi tên, kiểu cột, định dạng ngày/số theo locale vi-VN; giữ mã định danh/leading zeros.
+- [x] 03.06a Source schema editor: tên cột, kiểu, locale vi-VN, preview lỗi, transaction và restore theo tên cột gốc.
+- [ ] 03.06b Nghiệm thu CI; giữ leading zeros dạng chuỗi, hỗ trợ Excel display format chưa có.
 - [ ] 03.07 Mapping tên cột cũ/mới, phát hiện thiếu/thừa/sai kiểu, xem diff trước khi thay nguồn.
 - [x] 03.08a Source profiling v0.5.2: null, distinct, duplicate, min/max/sum/avg, top 10 distribution, tỷ lệ lỗi kiểu trên bảng đã nhập; cache theo revision.
 - [ ] 03.08b Kiểm tra lỗi parse trên dữ liệu gốc và histogram nâng cao khi có schema editor; xác minh CI profiling.
@@ -321,7 +322,7 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** chạy CI Data Profiling v0.5.2, merge main nếu pass; smoke test deployment production. Tiếp theo Schema Editor, header/range, mapping và batch refresh, rồi Phase 04 JOIN/UNION.
+**Next action:** CI và auto release v0.5.3; sau khi main cập nhật, triển khai header/range, mapping và batch refresh rồi JOIN/UNION.
 
 **Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
@@ -392,7 +393,8 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source SQL profiling theo bảng/revision, thống kê aggregate batch 8 cột, exact duplicate rows, top 10 frequency, kiểu dữ liệu đã chuẩn hóa.
 - [x] Source UI responsive, on-demand, kết quả riêng toàn nguồn, không áp dụng filter báo cáo; local-only.
 - [x] Source unit và E2E kiểm tra SQL ID, aggregate, empty, duplicate, filter independence, distribution, replace invalidation và mobile.
-- [ ] CI pass và merge main v0.5.2; smoke test Cloudflare production.
+- [x] CI và auto merge v0.5.2 pass run 45769824542, main c67e643.
+- [ ] Smoke test Cloudflare production.
 - Chưa có schema editor, histogram bin, lỗi parse trước chuẩn hóa, benchmark trên mobile yếu. Không thay OAuth/D1.
 
 ### CI-gated release automation
@@ -401,8 +403,14 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] CI 45765148497: 28/28 unit/integration và build pass; 9/11 E2E pass; cả hai profiling E2E không hiển thị kết quả. Không bỏ qua test.
 - [x] Sửa SQL aggregate count về INTEGER (giới hạn 100.000 dòng), tránh SUM(BIGINT) trả HUGEINT/Arrow decimal; thêm assertion SQL và fail-fast lỗi runtime trong E2E. Đây là nguyên nhân nghi ngờ từ source, cần kiểm chứng bằng CI.
 - [x] Source release job opt-in trailer `Release-KySheet: approved`, needs unit/build, contents:write chỉ ở job release, kiểm tra SHA/ancestor, non-force fast-forward và verify remote main. Upload diagnostics khi CI lỗi.
-- [ ] CI và release job v0.5.2 pass, xác minh HEAD main, Cloudflare deploy/smoke test. Không tick cho đến khi có bằng chứng.
+- [x] CI/release v0.5.2 pass, xác minh HEAD main c67e643; Cloudflare deployment chưa xác minh.
 
 - Sửa cú pháp YAML biểu thức if chứa dấu hai chấm bằng folded scalar; run 45769208332 bị từ chối trước khi tạo job.
 
 - [x] CI run 45769265748: unit/integration và build pass; 10/11 E2E pass. Profile runtime đã hiển thị kết quả, assertions rows/missing/groups/duplicates pass, header-only và phân bố rỗng pass. Lỗi còn lại do Playwright `has` dùng locator đã scope theo panel nên không tìm thấy rowheader trong row. Sửa inner locator tương đối và kiểm tra đúng một dòng; giữ nguyên mọi assertion thống kê, phân bố, mobile và thay nguồn. Chờ CI mới.
+
+### Schema Editor v0.5.3
+- [x] Source conversion strict, preview lỗi theo cột, không âm thầm thay dữ liệu lỗi; remap report theo ID, transaction, revision/cache invalidation.
+- [x] Source persistence quy tắc trong workspace JSON, reject client cũ ghi đè quy tắc, không migration D1.
+- [x] Source UI, unit, integration và E2E; commit opt-in release.
+- [ ] CI pass, auto merge main và smoke test production. Header/range, histogram, custom mapping khác tên cột gốc và Excel format chưa có.

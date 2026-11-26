@@ -1,0 +1,34 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {convertSchemaCell,resolveSchema,remapSchemaConfig,validateSchema} from '../src/schema-model.ts';
+import {defaultConfig} from '../src/model.ts';
+import type {Column} from '../src/model.ts';
+import {validateSavedSource} from '../src/workspace-model.ts';
+const cols:Column[]=[{id:'c0',name:'Code',kind:'text'},{id:'c1',name:'Amount',kind:'number'}];
+test('strict conversion preserves identifiers and rejects invalid numeric and date values',()=>{
+ assert.equal(convertSchemaCell('00123','text'),'00123');
+ assert.equal(convertSchemaCell('1.234,56','number-vi'),1234.56);
+ assert.equal(convertSchemaCell('1,234','number'),undefined);
+ assert.equal(convertSchemaCell('12.34,56','number-vi'),undefined);
+ assert.equal(convertSchemaCell('9007199254740993','number'),undefined);
+ assert.equal(convertSchemaCell('  ','number'),null);
+ assert.equal(convertSchemaCell('29/02/2024','date-vi'),'2024-02-29T00:00:00.000Z');
+ assert.equal(convertSchemaCell('29/02/2023','date-vi'),undefined);
+ assert.equal(convertSchemaCell('2026-04-31','date'),undefined);
+ assert.equal(convertSchemaCell('FALSE','boolean'),false);
+ assert.equal(convertSchemaCell('yes','boolean'),undefined);
+});
+test('schema resolves by source name, rejects duplicates and remaps reports by column ID',()=>{
+ const rules=validateSchema([{sourceName:'Amount',name:'Revenue',mode:'number'}]);
+ const {columns}=resolveSchema(cols,rules);
+ const config={...defaultConfig(cols),filters:[{column:'Amount',operator:'gte' as const,value:'1'}]};
+ const mapped=remapSchemaConfig(config,cols,columns);
+ assert.equal(mapped.metric,'Revenue');assert.equal(mapped.filters[0].column,'Revenue');
+ assert.throws(()=>resolveSchema(cols,[{sourceName:'Amount',name:'Code',mode:'auto'}]),/SCHEMA_NAME_DUPLICATE/);
+ assert.throws(()=>resolveSchema(cols,[{sourceName:'Missing',name:'X',mode:'auto'}]),/SOURCE_SCHEMA_MISMATCH/);
+ assert.throws(()=>remapSchemaConfig(config,cols,resolveSchema(cols,[{sourceName:'Amount',name:'Amount',mode:'text'}]).columns),/SCHEMA_REPORT_CONFLICT/);
+ const slot={id:crypto.randomUUID(),alias:'Sales',sheet:'Sales',columns:columns.map(({name,kind})=>({name,kind})),config:mapped,schema:rules};
+ assert.deepEqual(validateSavedSource(slot).schema,rules);
+ assert.throws(()=>validateSavedSource({...slot,schema:[{sourceName:'Amount',name:'Revenue',mode:'text'}]}),/WORKSPACE_SCHEMA_INVALID/);
+ assert.equal(resolveSchema([...cols].reverse(),rules).columns[0].name,'Revenue');
+});
