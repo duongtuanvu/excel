@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
-import {calculatePivot} from './pivot-engine';
-import {pivotMatrix} from './pivot-config';
+import {calculatePivot,drillPivot} from './pivot-engine';
+import {pivotMatrix,effectivePivotFormat} from './pivot-config';
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { mvpWasm, ehWasm, mvpWorker, ehWorker } from 'duckdb-assets';
 import { LIMITS, normalizeHeaders, compileReport, safeCsvCell } from './model';
@@ -310,7 +310,7 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv', source:Manag
     const sheet=XLSX.utils.aoa_to_sheet(matrix),offset=1+config.pivot.rows.length;
     for(let i=1;i<matrix.length;i++)for(let j=offset;j<matrix[i].length;j++){
       const cell=sheet[XLSX.utils.encode_cell({r:i,c:j})];
-      if(cell?.t==='n'){const m=config.pivot.measures[(j-offset)%config.pivot.measures.length];cell.z='#,##0'+(m.decimals?'.'+'0'.repeat(m.decimals):'')+(m.format==='percent'?'%':m.format==='vnd'?' "₫"':'');}
+      if(cell?.t==='n'){const m=config.pivot.measures[(j-offset)%config.pivot.measures.length];cell.z='#,##0'+(m.decimals?'.'+'0'.repeat(m.decimals):'')+(effectivePivotFormat(m)==='percent'?'%':effectivePivotFormat(m)==='vnd'?' "₫"':'');}
     }
     XLSX.utils.book_append_sheet(book,sheet,'Pivot');
   }
@@ -761,6 +761,11 @@ async function handle(req: Request):Promise<unknown>{
         if(error instanceof Error && /^PROFILE_[A-Z_]+:/.test(error.message))throw error;
         throw new Error('PROFILE_DISTRIBUTION_FAILED: Không thể tính phân bố của cột này.');
       }
+    }
+    case 'drillPivot':{
+      const source=readable(req.input.sourceId,req.input.revision).source,{conn}=await connect();
+      try{return await drillPivot(req.input.config,source.columns,sourceTable(source.id),req.input.row,req.input.column,req.input.page,sql=>conn.query(sql));}
+      catch(e){if(e instanceof Error&&e.message.startsWith('PIVOT_'))throw e;throw Error('PIVOT_DRILL_FAILED: Không thể truy vấn chi tiết.');}
     }
     case 'previewPivot':{
       const source=readable(req.input.sourceId,req.input.revision).source,{conn}=await connect();

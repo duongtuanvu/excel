@@ -33,7 +33,7 @@ export async function checkSession() {
   return identity(await request('/api/session/check'));
 }
 export async function putSettings(session: AccountSnapshot, settings: AccountSettings): Promise<number> {
-  const body = await request('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-KySheet-User': session.account.id, 'X-KySheet-Schema': '1', 'X-KySheet-Layout': '1', 'X-KySheet-Pipeline':'1', 'X-KySheet-Period':'1', 'X-KySheet-Pivot':'1' }, body: JSON.stringify({ revision: session.revision, settings: validateSettings(settings) }) }) as Record<string, unknown>;
+  const body = await request('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-KySheet-User': session.account.id, 'X-KySheet-Schema': '1', 'X-KySheet-Layout': '1', 'X-KySheet-Pipeline':'1', 'X-KySheet-Period':'1', 'X-KySheet-Pivot':'1', 'X-KySheet-Pivot-Analytics':'1' }, body: JSON.stringify({ revision: session.revision, settings: validateSettings(settings) }) }) as Record<string, unknown>;
   if (!validRevision(body.revision) || body.revision !== session.revision + 1) throw new Error('Phiên bản phản hồi không hợp lệ.');
   return body.revision;
 }

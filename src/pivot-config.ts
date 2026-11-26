@@ -8,14 +8,19 @@ export type PivotOp=typeof PIVOT_OPERATORS[number];
 export type PivotFormat=typeof PIVOT_FORMATS[number];
 export type Operand={kind:'column';column:string}|{kind:'constant';value:number};
 export type RowFormula={left:Operand;op:PivotOp;right:Operand};
-export type MeasureBase={id:string;name:string;format:PivotFormat;decimals:number};
+export const PIVOT_SHOW_AS=['grand','row','column'] as const;
+export type PivotShowAs=typeof PIVOT_SHOW_AS[number];
+export type MeasureBase={id:string;name:string;format:PivotFormat;decimals:number;showAs?:PivotShowAs};
 export type AggregateMeasure=MeasureBase&{kind:'aggregate';aggregate:Aggregate;column:string};
 export type RowMeasure=MeasureBase&{kind:'row';aggregate:'sum'|'avg'|'min'|'max';expression:RowFormula};
 export type FormulaMeasure=MeasureBase&{kind:'formula';left:string;op:PivotOp;right:string};
 export type PivotMeasure=AggregateMeasure|RowMeasure|FormulaMeasure;
-export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean};
+export type PivotConfig={version:1;rows:string[];columns:string[];measures:PivotMeasure[];subtotals:boolean;topN?:{count:number;measureId:string}};
 export type PivotAxis={level:number;labels:(string|null)[]};
-export type PivotResult={rows:PivotAxis[];columns:PivotAxis[];values:(number|null)[][]};
+export type PivotResult={rows:PivotAxis[];columns:PivotAxis[];values:(number|null)[][];ranked?:{shownLeaves:number;hiddenLeaves:number}};
+export type PivotDrill={row:PivotAxis;column:PivotAxis;page:number;rows:(string|null)[][];columns:Column[];count:number};
+export const PIVOT_DRILL_PAGE=25;
+export const PIVOT_DRILL_TEXT=240;
 const err=(message:string)=>new Error('PIVOT_INVALID: '+message);
 const rec=(v:unknown):Record<string,unknown>=>{
  if(!v||typeof v!=='object'||Array.isArray(v))throw err('Cấu hình không hợp lệ.');
@@ -45,7 +50,8 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
  const measures:PivotMeasure[]=v.measures.map(raw=>{
    const m=rec(raw),id=text(m.id,40),name=text(m.name,100).trim();
    if(!/^m[1-9][0-9]{0,7}$/.test(id)||ids.has(id)||names.has(name.toLowerCase())||!PIVOT_FORMATS.includes(m.format as PivotFormat)||typeof m.decimals!=='number'||!Number.isInteger(m.decimals)||m.decimals<0||m.decimals>6)throw err('Mã, tên hoặc định dạng chỉ số không hợp lệ/trùng.');
-   const base={id,name,format:m.format as PivotFormat,decimals:m.decimals};
+   if(m.showAs!==undefined&&!PIVOT_SHOW_AS.includes(m.showAs as PivotShowAs))throw err('Kiểu tỷ trọng không hợp lệ.');
+   const base={id,name,format:m.format as PivotFormat,decimals:m.decimals,...(m.showAs?{showAs:m.showAs as PivotShowAs}:{})};
    let result:PivotMeasure;
    if(m.kind==='aggregate'){
      if(!PIVOT_AGGREGATES.includes(m.aggregate as Aggregate))throw err('Phép tổng hợp không hợp lệ.');
@@ -61,7 +67,13 @@ export function validatePivot(input:unknown):PivotConfig|undefined{
    }else throw err('Loại chỉ số không hợp lệ.');
    ids.add(id);names.add(name.toLowerCase());return result;
  });
- return {version:1,rows,columns,measures,subtotals:v.subtotals};
+ let topN:PivotConfig['topN'];
+ if(v.topN!==undefined){
+   const t=rec(v.topN);
+   if(!rows.length||typeof t.count!=='number'||!Number.isInteger(t.count)||t.count<1||t.count>100||typeof t.measureId!=='string'||!ids.has(t.measureId))throw err('Top N cần nhóm hàng, N từ 1–100 và chỉ số hợp lệ.');
+   topN={count:t.count,measureId:t.measureId};
+ }
+ return {version:1,rows,columns,measures,subtotals:v.subtotals,...(topN?{topN}:{})};
 }
 export function pivotReferences(pivot:PivotConfig):string[]{
  const refs=[...pivot.rows,...pivot.columns];
@@ -97,12 +109,16 @@ export function axisLabel(axis:PivotAxis,fields:number):string{
  const values=axis.labels.map(v=>v===null?'(NULL)':v===''?'(Rỗng)':v);
  return (axis.level<fields?'Tổng phụ · ':'')+values.join(' / ');
 }
+export function effectivePivotFormat(measure:PivotMeasure):PivotFormat{return measure.showAs?'percent':measure.format;}
+export function hasPivotAnalytics(pivot?:PivotConfig):boolean{return !!pivot&&(!!pivot.topN||pivot.measures.some(m=>!!m.showAs));}
 export function pivotFormat(value:number|null,measure:PivotMeasure):string{
  if(value===null)return '—';
  const opts={minimumFractionDigits:measure.decimals,maximumFractionDigits:measure.decimals};
- return new Intl.NumberFormat('vi-VN',measure.format==='vnd'?{...opts,style:'currency',currency:'VND'}:measure.format==='percent'?{...opts,style:'percent'}:opts).format(value);
+ return new Intl.NumberFormat('vi-VN',effectivePivotFormat(measure)==='vnd'?{...opts,style:'currency',currency:'VND'}:effectivePivotFormat(measure)==='percent'?{...opts,style:'percent'}:opts).format(value);
 }
 export function pivotMatrix(pivot:PivotConfig,result:PivotResult):(string|number|null)[][]{
- return [['Cấp hàng',...pivot.rows,...result.columns.flatMap(a=>pivot.measures.map(m=>axisLabel(a,pivot.columns.length)+' · '+m.name))],
- ...result.rows.map((a,i)=>[a.level===0?'Tổng cộng':a.level<pivot.rows.length?'Tổng phụ':'Chi tiết',...pivot.rows.map((_,j)=>j<a.level?a.labels[j]:null),...result.values[i]])];
+ const suffix=(m:PivotMeasure)=>m.showAs?' (% '+(m.showAs==='grand'?'tổng chung':m.showAs==='row'?'tổng hàng':'tổng cột')+'; 1=100%)':'';
+ const totalSuffix=pivot.topN?' (toàn bộ sau lọc)':'';
+ return [['Cấp hàng',...pivot.rows,...result.columns.flatMap(a=>pivot.measures.map(m=>axisLabel(a,pivot.columns.length)+' · '+m.name+suffix(m)))],
+ ...result.rows.map((a,i)=>[a.level===0?'Tổng cộng'+totalSuffix:a.level<pivot.rows.length?'Tổng phụ'+totalSuffix:'Chi tiết',...pivot.rows.map((_,j)=>j<a.level?a.labels[j]:null),...result.values[i]])];
 }

@@ -1,3 +1,4 @@
+import {hasPivotAnalytics} from '../src/pivot-config.ts';
 import type { Env } from './db.ts';
 import { finishLogin, session, startLogin } from './auth.ts';
 import { ACCOUNT_MAX_BYTES, parseSettings, validRevision, validateSettings } from '../src/account-model.ts';
@@ -39,10 +40,11 @@ async function api(request: Request, env: Env): Promise<Response> {
     // Read by revision, then retain the existing CAS and session predicate for the update.
     const supportsPeriod=request.headers.get('X-KySheet-Period')==='1';
     const supportsPivot=request.headers.get('X-KySheet-Pivot')==='1';
-    if (request.headers.get('X-KySheet-Schema') !== '1' || request.headers.get('X-KySheet-Layout') !== '1' || request.headers.get('X-KySheet-Pipeline') !== '1' || !supportsPeriod || !supportsPivot) {
+    const supportsAnalytics=request.headers.get('X-KySheet-Pivot-Analytics')==='1';
+    if (request.headers.get('X-KySheet-Schema') !== '1' || request.headers.get('X-KySheet-Layout') !== '1' || request.headers.get('X-KySheet-Pipeline') !== '1' || !supportsPeriod || !supportsPivot || !supportsAnalytics) {
       const current = await env.DB.prepare('SELECT payload FROM user_settings WHERE user_id=? AND revision=?').bind(active.id,revision).first<{payload:string}>();
       const existing=current?parseSettings(current.payload):null;
-      if (existing && ((!supportsPivot && (existing.lastConfig?.pivot || existing.templates.some(t=>t.config.pivot) || existing.workspace?.slots.some(s=>s.config.pivot) || existing.workspace?.models?.some(m=>m.config.pivot))) || (!supportsPeriod && (existing.workspace?.models?.length || existing.workspace?.outputId)) || (existing.pipelines?.length && request.headers.get('X-KySheet-Pipeline') !== '1') || existing.workspace?.slots.some(slot=> (slot.schema?.length && request.headers.get('X-KySheet-Schema') !== '1') || (slot.layout && request.headers.get('X-KySheet-Layout') !== '1')))) {
+      if (existing && ((!supportsAnalytics && (hasPivotAnalytics(existing.lastConfig?.pivot) || existing.templates.some(t=>hasPivotAnalytics(t.config.pivot)) || existing.workspace?.slots.some(s=>hasPivotAnalytics(s.config.pivot)) || existing.workspace?.models?.some(m=>hasPivotAnalytics(m.config.pivot)))) || (!supportsPivot && (existing.lastConfig?.pivot || existing.templates.some(t=>t.config.pivot) || existing.workspace?.slots.some(s=>s.config.pivot) || existing.workspace?.models?.some(m=>m.config.pivot))) || (!supportsPeriod && (existing.workspace?.models?.length || existing.workspace?.outputId)) || (existing.pipelines?.length && request.headers.get('X-KySheet-Pipeline') !== '1') || existing.workspace?.slots.some(slot=> (slot.schema?.length && request.headers.get('X-KySheet-Schema') !== '1') || (slot.layout && request.headers.get('X-KySheet-Layout') !== '1')))) {
         return json({code:'SETTINGS_CLIENT_UPGRADE',error:'Ứng dụng đã được nâng cấp. Hãy tải lại trang trước khi lưu cấu hình.'},409);
       }
     }

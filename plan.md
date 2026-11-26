@@ -458,3 +458,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [ ] CI + release and production smoke test. Remaining: drag/drop, expand/collapse, top-N, % of totals, drill-down, richer expressions/DAX, time intelligence, DECIMAL accuracy; no claim of full Phase 05 acceptance.
 
 - [x] CI run 45793164999: 51/52 unit/integration pass; build and 21/21 Chromium E2E pass, release skipped. Failed test used SQLite to execute DuckDB TRY_CAST syntax. Fixed the numeric-only SQLite fixture with one explicitly scoped equivalent CAST substitution; retained all original aggregate/empty-intersection assertions and unmodified production SQL. Added a real DuckDB-Wasm E2E for row formulas, two-level subtotals, zero division and unchanged source. CI and merge still require verification.
+
+### Pivot Analytics v0.7.1
+- [x] v0.7.0 CI 45794411111: 52 unit/integration + 22 E2E passed, main e65cbdf verified.
+- [x] Source Top N leaf ranking by raw grand-column measure, full filtered totals retained; percent of grand/row/column computed from original aggregates, not transformed measures.
+- [x] Source row collapse, drill-down exact group predicates, bounded 25-row pages, saved analytics and old-client write protection.
+- [ ] CI/auto release and production smoke test. Column collapse, drag/drop, richer expressions, time intelligence and DECIMAL remain future work.

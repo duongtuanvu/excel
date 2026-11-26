@@ -1,7 +1,8 @@
-import {compileReport} from './model.ts';
+import {compileReport,sqlText,LIMITS} from './model.ts';
+import {applyPivotAnalytics} from './pivot-analytics.ts';
 import type {Column,Config} from './model.ts';
-import {validatePivot,validatePivotColumns,PIVOT_LIMITS,arithmetic} from './pivot-config.ts';
-import type {PivotAxis,PivotResult,Operand} from './pivot-config.ts';
+import {validatePivot,validatePivotColumns,PIVOT_LIMITS,arithmetic,PIVOT_DRILL_PAGE,PIVOT_DRILL_TEXT} from './pivot-config.ts';
+import type {PivotAxis,PivotResult,Operand,PivotDrill,PivotConfig} from './pivot-config.ts';
 type Result=Iterable<unknown>;
 const key=(a:PivotAxis)=>JSON.stringify([a.level,a.labels]);
 const num=(v:unknown):number|null=>v==null?null:Number.isFinite(Number(v))?Number(v):null;
@@ -86,5 +87,44 @@ export async function calculatePivot(config:Config,columns:Column[],table:string
   const seen=new Map<string,number|null>();
   return pivot!.measures.map(m=>{const value=m.kind==='formula'?arithmetic(seen.get(m.left)??null,seen.get(m.right)??null,m.op):m.kind==='aggregate'&&['count','distinct'].includes(m.aggregate)?0:null;seen.set(m.id,value);return value;});
  }
- return {rows:rowAxes,columns:columnAxes,values:rowAxes.map(a=>columnAxes.flatMap(b=>data.get(JSON.stringify([key(a),key(b)]))??emptyValues()))};
+ return applyPivotAnalytics(pivot,{rows:rowAxes,columns:columnAxes,values:rowAxes.map(a=>columnAxes.flatMap(b=>data.get(JSON.stringify([key(a),key(b)]))??emptyValues()))});
+}
+
+function checkedDrillAxis(input:unknown,fields:string[],pivot:PivotConfig):PivotAxis{
+ if(!input||typeof input!=='object')throw Error('PIVOT_DRILL_INVALID: Nhóm không hợp lệ.');
+ const a=input as PivotAxis;
+ if(!Number.isInteger(a.level)||a.level<0||a.level>fields.length||(!pivot.subtotals&&a.level!==0&&a.level!==fields.length)||!Array.isArray(a.labels)||a.labels.length!==a.level||a.labels.some(v=>v!==null&&(typeof v!=='string'||v.includes('\0')||Array.from(v).length>PIVOT_LIMITS.label)))throw Error('PIVOT_DRILL_INVALID: Nhóm hoặc giá trị không hợp lệ.');
+ return {level:a.level,labels:[...a.labels]};
+}
+export function compilePivotDrill(config:Config,columns:Column[],table:string,row:unknown,column:unknown){
+ const pivot=validatePivot(config.pivot);
+ if(!pivot)throw Error('PIVOT_INVALID: Chưa thiết lập Pivot.');
+ validatePivotColumns(pivot,columns);
+ const r=checkedDrillAxis(row,pivot.rows,pivot),c=checkedDrillAxis(column,pivot.columns,pivot);
+ const from=compileReport(config,columns,table).from;
+ const field=(name:string)=>{
+   const col=columns.find(v=>v.name===name);
+   if(!col||!/^c[0-9]+$/.test(col.id))throw Error('PIVOT_DRILL_INVALID: Cột không hợp lệ.');
+   return '"'+col.id+'"';
+ };
+ const predicates=[...r.labels.map((v,i)=>({field:field(pivot.rows[i]),v})),...c.labels.map((v,i)=>({field:field(pivot.columns[i]),v}))].map(({field,v})=>field+(v===null?' IS NULL':' = '+sqlText(v)));
+ const scope=from+(predicates.length?(from.includes(' WHERE ')?' AND ':' WHERE ')+predicates.join(' AND '):'');
+ if(!columns.length||columns.length>LIMITS.columns||new Set(columns.map(v=>v.id)).size!==columns.length)throw Error('PIVOT_DRILL_INVALID: Schema không hợp lệ.');
+ const projection=columns.map(col=>{
+   const q=field(col.name);
+   return 'CASE WHEN length('+q+') > '+PIVOT_DRILL_TEXT+' THEN left('+q+','+PIVOT_DRILL_TEXT+") || '…' ELSE "+q+' END AS '+q;
+ }).join(', ');
+ return {row:r,column:c,count:'SELECT CAST(COUNT(*) AS DOUBLE) AS n'+scope,page:(offset:number)=>'SELECT '+projection+scope+' ORDER BY rowid LIMIT '+PIVOT_DRILL_PAGE+' OFFSET '+offset};
+}
+export async function drillPivot(config:Config,columns:Column[],table:string,row:unknown,column:unknown,page:unknown,query:(sql:string)=>Promise<Result>):Promise<PivotDrill>{
+ if(typeof page!=='number'||!Number.isSafeInteger(page)||page<0)throw Error('PIVOT_DRILL_INVALID: Trang không hợp lệ.');
+ const sql=compilePivotDrill(config,columns,table,row,column);
+ const total=Array.from(await query(sql.count))[0] as Record<string,unknown>|undefined,count=Number(total?.n);
+ if(!Number.isSafeInteger(count)||count<0||count>LIMITS.rows)throw Error('PIVOT_DRILL_INVALID: Số dòng ngoài giới hạn.');
+ const safePage=Math.min(page,Math.floor(Math.max(0,count-1)/PIVOT_DRILL_PAGE));
+ const rows=Array.from(await query(sql.page(safePage*PIVOT_DRILL_PAGE)),v=>columns.map(c=>{
+   const value=(v as Record<string,unknown>)[c.id];return value==null?null:String(value);
+ }));
+ if(rows.length!==Math.min(PIVOT_DRILL_PAGE,Math.max(0,count-safePage*PIVOT_DRILL_PAGE)))throw Error('PIVOT_DRILL_INVALID: Kết quả không khớp số dòng.');
+ return {row:sql.row,column:sql.column,page:safePage,count,columns,rows};
 }
