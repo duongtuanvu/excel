@@ -26,8 +26,15 @@ test('demo, import, filter, template, workbook export', async ({ page }, testInf
   expect(exported.SheetNames).toEqual(['Tổng quan','Tổng hợp','Dữ liệu đã lọc']);
   const rows = XLSX.utils.sheet_to_json(exported.Sheets['Tổng hợp'],{header:1});
   expect(rows).toContainEqual(['North',5,2]);
-  await page.getByLabel('Sheet',{exact:true}).selectOption('Other');
+  const sheet = page.getByRole('combobox',{name:'Sheet',exact:true});
+  await expect(sheet).toBeEnabled();
+  await expect(sheet).toHaveValue('Sales');
+  await sheet.selectOption('Other',{timeout:10000});
   await expect(page.getByTestId('metric-total')).toHaveText('100');
+  await expect(sheet).toHaveValue('Other');
+  await sheet.selectOption('Sales',{timeout:10000});
+  await expect(page.getByTestId('metric-total')).toHaveText('5');
+  await expect(page.getByLabel('Giá trị lọc 1')).toHaveValue('North');
   await page.setViewportSize({width:390,height:844});
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

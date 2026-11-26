@@ -376,3 +376,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 
 - 2026-11-26: CI v0.5 `55dc6b0` (run 45749263382) xác nhận 21 unit/integration pass, build pass, Chromium pass, 6/7 E2E pass. Sửa lỗi test đọc file export bằng Node fs; không bỏ assertion nội dung workbook.
 - Không thay D1 schema/migration hoặc OAuth. Workspace lưu trong payload hiện hữu. Một workspace/account; người dùng phải chọn lại file cho từng slot. Chưa có map cột khác tên hoặc nhiều project/account. Checklist mới là implementation, chưa phải runtime nghiệm thu.
+
+### Release gate v0.5.1
+
+- [x] CI 45752215492: 25/25 unit/integration, build và Chromium pass; 8/9 E2E pass, gồm workspace restore. Export workbook assertions pass; lỗi locator Sheet ở bước tiếp theo.
+- [x] Thêm accessible name rõ ràng cho Sheet combobox và regression test chuyển sheet qua lại giữ filter. Chờ CI lại.
+- Quy trình theo yêu cầu chủ dự án: feature branch → CI pass → merge main (Cloudflare Workers Builds) → module tiếp theo. Không đánh dấu production smoke test nếu chưa xác minh. Không merge module có lỗi CI chưa xử lý.
