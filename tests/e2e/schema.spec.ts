@@ -28,8 +28,24 @@ test('schema previews errors, applies rename and locale conversion, restores sav
  expect(accountFixture.settings.workspace?.slots[0].schema).toEqual([{sourceName:'Code',name:'Code',mode:'text'},{sourceName:'Amount',name:'Revenue',mode:'number-vi'}]);
  await page.reload();
  await expect(page.getByText('0/1 nguồn đã nạp',{exact:true})).toBeVisible();
- await page.getByTestId('filtered-count').waitFor();
- await page.getByLabel('File cho nguồn schema.xlsx · Sales',{exact:true}).setInputFiles(file('next.xlsx',[['Amount','Code'],['3.000,00','003']]));
+ // A visible KPI can still show the startup placeholder. Wait for the engine and
+ // use the actual enabled file-picker button, as a user would.
+ await expect(page.getByTestId('filtered-count')).toHaveText('180');
+ const savedSlot=page.getByRole('listitem').filter({has:page.getByText('schema.xlsx · Sales',{exact:true})});
+ const choose=savedSlot.getByRole('button',{name:'Chọn file',exact:true});
+ const pick=async(payload:ReturnType<typeof file>)=>{
+   await expect(choose).toBeEnabled();
+   const pending=page.waitForEvent('filechooser');
+   await choose.click();
+   await (await pending).setFiles(payload);
+ };
+ // A bad locale value must be rejected without replacing the current source.
+ await pick(file('bad.xlsx',[['Amount','Code'],['3,000.00','003']]));
+ await expect(page.getByRole('alert')).toContainText('SCHEMA_CONVERSION_FAILED');
+ await expect(page.getByText('0/1 nguồn đã nạp',{exact:true})).toBeVisible();
+ await expect(page.getByTestId('filtered-count')).toHaveText('180');
+ await pick(file('next.xlsx',[['Amount','Code'],['3.000,00','003']]));
+ await expect(page.getByText('1/1 nguồn đã nạp',{exact:true})).toBeVisible();
  await expect(page.getByTestId('filtered-count')).toHaveText('1');
  await panel.getByRole('button',{name:'Chỉnh cấu trúc'}).click();
  await expect(panel.getByLabel('Tên cột Amount',{exact:true})).toHaveValue('Revenue');

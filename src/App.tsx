@@ -254,7 +254,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     });
   }
   function attachSavedSource(slotId: string, file: File) {
-    if (locked || busyRef.current) return;
+    if (locked || busyRef.current || !client.current) {
+      setError('WORKSPACE_BUSY: Bộ xử lý chưa sẵn sàng. Hãy chọn lại file khi thao tác hiện tại hoàn tất.');
+      return;
+    }
     const slot=session.settings.workspace?.slots.find(s=>s.id===slotId);
     if (!slot || sources.some(s=>s.slotId===slotId)) { setError('WORKSPACE_SLOT_INVALID: Nguồn đã thay đổi hoặc đã được mở.'); return; }
     if (!/\.(xlsx|xls|csv|tsv)$/i.test(file.name) || file.size<=0 || file.size>LIMITS.fileBytes) {

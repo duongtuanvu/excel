@@ -21,8 +21,8 @@ function Slot({slot,loaded,disabled,onAttach,onForget,onActivate}:{
     <div className="saved-slot-head"><strong title={slot.alias}>{slot.alias}</strong><span className={loaded?'slot-badge ready':'slot-badge'}>{loaded?'Đã nạp':'Chờ file'}</span></div>
     <small title={slot.sheet}>{slot.sheet} · {slot.columns.length} cột</small>
     {loaded?<button className="button" disabled={disabled} onClick={()=>onActivate(loaded.id)}>Mở báo cáo</button>:<>
-      <input ref={picker} type="file" accept=".xlsx,.xls,.csv,.tsv" hidden aria-label={'File cho nguồn '+slot.alias} onChange={event=>{
-        const file=event.target.files?.[0];event.target.value='';if(file&&!disabled)onAttach(slot.id,file);
+      <input ref={picker} type="file" accept=".xlsx,.xls,.csv,.tsv" hidden disabled={disabled} aria-label={'File cho nguồn '+slot.alias} onChange={event=>{
+        const file=event.target.files?.[0];event.target.value='';if(file)onAttach(slot.id,file);
       }}/>
       {confirm?<div className="slot-confirm"><small>Bỏ cấu hình nguồn này khỏi tài khoản? File gốc không bị xóa.</small><div className="slot-actions"><button className="button danger-button" disabled={disabled} onClick={()=>{setConfirm(false);onForget(slot.id);}}>Xác nhận bỏ</button><button className="button" onClick={()=>setConfirm(false)}>Hủy</button></div></div>:<div className="slot-actions"><button className="button" disabled={disabled} onClick={()=>picker.current?.click()}>Chọn file</button><button className="button text-button" disabled={disabled} onClick={()=>setConfirm(true)}>Bỏ cấu hình</button></div>}
     </>}

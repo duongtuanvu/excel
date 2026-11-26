@@ -414,3 +414,5 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source persistence quy tắc trong workspace JSON, reject client cũ ghi đè quy tắc, không migration D1.
 - [x] Source UI, unit, integration và E2E; commit opt-in release.
 - [ ] CI pass, auto merge main và smoke test production. Header/range, histogram, custom mapping khác tên cột gốc và Excel format chưa có.
+
+- [x] CI run 45771288141: unit/integration, build pass; 11/12 E2E pass. Schema preview/apply/save assertions pass; restore sau reload còn lỗi, KPI vẫn 180 dòng demo. Source cho thấy E2E chỉ chờ KPI tồn tại, input hidden có thể nhận file trước khi Worker sẵn sàng và bỏ qua onChange. Sửa disabled input, báo WORKSPACE_BUSY thay vì bỏ qua file, E2E đợi demo hoàn tất và chọn qua filechooser thật; thêm regression file sai locale không thay nguồn trước khi restore file hợp lệ. Chờ CI mới, không bỏ assertion.
