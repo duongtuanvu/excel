@@ -89,7 +89,7 @@ export default function AuthGate() {
     setGate({type:'loading'});
     try {
       const data=await loadSession();
-      if (mounted.current && generation.current===version) publish(data);
+      if (mounted.current && generation.current===version) { publish(data); announce(); }
     } catch (e) {
       if (!mounted.current || generation.current!==version) return;
       if (e instanceof AccountError && e.status===401) setGate({type:'login',message:initialMessage()});
@@ -146,7 +146,8 @@ export default function AuthGate() {
     try { await operation(before,version); }
     catch(e) {
       if(version===generation.current && e instanceof AccountError && (e.status===401||e.status===403)) clear('Phiên đăng nhập đã hết hạn.');
-      if(version===generation.current && e instanceof AccountError && e.status===409) await verify();
+      if(version===generation.current && e instanceof AccountError && e.code==='AUTH_ACCOUNT_CHANGED') clear('Tài khoản đã thay đổi ở tab khác. Hãy đăng nhập lại.');
+      else if(version===generation.current && e instanceof AccountError && e.status===409) await verify();
       throw e;
     } finally { writing.current=false; if(mounted.current) setSaving(false); }
   }

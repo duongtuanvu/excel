@@ -1,8 +1,8 @@
-import type { Env } from './db';
-import { credentials, providerCode, tokenFailure } from './auth-diagnostics';
-import { googleFetch, isRedirectStatus, networkFailure } from './google-fetch';
-import { defaultSettings } from '../src/account-model';
-import { cookie, getCookie, hash, isToken, now, OAUTH_COOKIE, OAUTH_SECONDS, randomToken, redirect, SESSION_COOKIE, SESSION_SECONDS } from './security';
+import type { Env } from './db.ts';
+import { credentials, providerCode, tokenFailure } from './auth-diagnostics.ts';
+import { googleFetch, isRedirectStatus, networkFailure } from './google-fetch.ts';
+import { defaultSettings } from '../src/account-model.ts';
+import { cookie, getCookie, hash, isToken, now, OAUTH_COOKIE, OAUTH_SECONDS, randomToken, redirect, SESSION_COOKIE, SESSION_SECONDS } from './security.ts';
 
 type Session = { id: string; email: string; expiresAt: number; tokenHash: string };
 type GoogleIdentity = { sub: string; email: string; name?: string; email_verified: boolean };

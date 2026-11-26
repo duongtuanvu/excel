@@ -346,3 +346,11 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 
 - [x] Sửa tương thích workerd: outbound Google fetch dùng manual, không follow redirect, phân loại network/timeout/HTTP và thêm source regression test.
 - [ ] Chạy regression test trên runtime phù hợp; login production đã được chủ dự án xác nhận riêng.
+
+### Auth MVP regression gate (v0.4.1)
+
+- [x] Source SQLite-backed API integration tests for account isolation, save/reload, CAS, CSRF, expired/revoked session, mocked OAuth callback and replay.
+- [x] Source Playwright account fixture, corrected profile/reset test and logout regression; no production auth bypass.
+- [x] Source CI workflow for Node unit/integration and build/Playwright.
+- [x] Source distinct error codes for account switch, settings conflict and expired session; tab notification after successful session boot.
+- [ ] Verify CI results, D1/Google integration, two real accounts and device restore before closing Auth MVP.

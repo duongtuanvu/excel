@@ -1,13 +1,13 @@
-import type { Env } from './db';
-import { finishLogin, session, startLogin } from './auth';
-import { ACCOUNT_MAX_BYTES, parseSettings, validRevision, validateSettings } from '../src/account-model';
-import { cookie, json, now, readJson, redirect, sameOriginWrite, SESSION_COOKIE, trustedOrigin } from './security';
+import type { Env } from './db.ts';
+import { finishLogin, session, startLogin } from './auth.ts';
+import { ACCOUNT_MAX_BYTES, parseSettings, validRevision, validateSettings } from '../src/account-model.ts';
+import { cookie, json, now, readJson, redirect, sameOriginWrite, SESSION_COOKIE, trustedOrigin } from './security.ts';
 
-const unauthorized = () => json({ error: 'Phiên đăng nhập đã hết hạn.' }, 401);
+const unauthorized = () => json({ code: 'AUTH_SESSION_REQUIRED', error: 'Phiên đăng nhập đã hết hạn.' }, 401);
 async function api(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url), path = url.pathname, method = request.method;
-  if (!trustedOrigin(request, env.APP_ORIGIN)) return json({ error: 'Origin không hợp lệ.' }, 403);
-  if (method !== 'GET' && !sameOriginWrite(request, env.APP_ORIGIN)) return json({ error: 'Yêu cầu khác origin bị từ chối.' }, 403);
+  if (!trustedOrigin(request, env.APP_ORIGIN)) return json({ code: 'AUTH_ORIGIN', error: 'Origin không hợp lệ.' }, 403);
+  if (method !== 'GET' && !sameOriginWrite(request, env.APP_ORIGIN)) return json({ code: 'AUTH_CSRF', error: 'Yêu cầu khác origin bị từ chối.' }, 403);
   if (path === '/api/auth/login' && method === 'POST') return startLogin(env);
   if (path === '/api/auth/callback' && method === 'GET') return finishLogin(request, env);
   const active = await session(request, env);
@@ -20,7 +20,7 @@ async function api(request: Request, env: Env): Promise<Response> {
     return json({ account, settings: parseSettings(row.payload), revision: row.revision, expiresAt: active.expiresAt });
   }
   // A stale tab must never save its state into another account after a cookie switch.
-  if (method !== 'GET' && request.headers.get('X-KySheet-User') !== active.id) return json({ error: 'Tài khoản đã thay đổi. Hãy đăng nhập lại.' }, 409);
+  if (method !== 'GET' && request.headers.get('X-KySheet-User') !== active.id) return json({ code: 'AUTH_ACCOUNT_CHANGED', error: 'Tài khoản đã thay đổi. Hãy đăng nhập lại.' }, 409);
   if (path === '/api/auth/logout' && method === 'POST') {
     await env.DB.prepare('DELETE FROM sessions WHERE token_hash=? AND user_id=?').bind(active.tokenHash, active.id).run();
     return json({ ok: true }, 200, [cookie(SESSION_COOKIE, '', 0)]);
@@ -32,10 +32,13 @@ async function api(request: Request, env: Env): Promise<Response> {
       if (!input || !validRevision(input.revision)) throw new Error('Revision không hợp lệ.');
       revision = input.revision;
       payload = JSON.stringify(validateSettings(input.settings));
-    } catch { return json({ error: 'Cấu hình hoặc dung lượng dữ liệu không hợp lệ.' }, 400); }
+    } catch { return json({ code: 'SETTINGS_INVALID', error: 'Cấu hình hoặc dung lượng dữ liệu không hợp lệ.' }, 400); }
     // Compare-and-swap: reject concurrent saves. Recheck session within the write statement.
     const result = await env.DB.prepare('UPDATE user_settings SET payload=?,revision=revision+1,updated_at=? WHERE user_id=? AND revision=? AND EXISTS (SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?) RETURNING revision').bind(payload, now(), active.id, revision, active.tokenHash, active.id, now()).first<{ revision: number }>();
-    if (!result) return json({ error: 'Cấu hình đã thay đổi hoặc phiên đã hết hạn. Hãy tải lại từ tài khoản.' }, 409);
+    if (!result) {
+      if (!await session(request, env)) return unauthorized();
+      return json({ code: 'SETTINGS_CONFLICT', error: 'Cấu hình đã thay đổi ở thiết bị hoặc tab khác. Hãy tải lại từ tài khoản trước khi lưu.' }, 409);
+    }
     return json({ revision: result.revision });
   }
   return json({ error: 'Không tìm thấy API.' }, 404);

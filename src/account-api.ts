@@ -2,7 +2,7 @@ import type { AccountSnapshot, AccountSettings } from './account-model';
 import { validateSettings, validRevision } from './account-model';
 
 export class AccountError extends Error {
-  constructor(message: string, readonly status: number) { super(message); this.name = 'AccountError'; }
+  constructor(message: string, readonly status: number, readonly code = 'ACCOUNT_REQUEST_FAILED') { super(message); this.name = 'AccountError'; }
 }
 async function request(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(path, { ...init, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(20_000) });
@@ -11,7 +11,8 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   catch { throw new AccountError('API tài khoản chưa được cấu hình hoặc phản hồi không hợp lệ.', response.status || 503); }
   if (!response.ok) {
     const error = body && typeof body === 'object' && 'error' in body ? String(body.error) : 'Không thể kết nối tài khoản.';
-    throw new AccountError(error, response.status);
+    const code = body && typeof body === 'object' && 'code' in body && typeof body.code === 'string' ? body.code : 'ACCOUNT_REQUEST_FAILED';
+    throw new AccountError(error, response.status, code);
   }
   return body;
 }
