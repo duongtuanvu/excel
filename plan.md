@@ -61,7 +61,7 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 - [x] 00.04 Tài liệu Cloudflare Workers Builds cho repo excel, branch main.
 - [x] 00.05 Source unit test model (6 test), user-model (4 test) và Playwright E2E (2 kịch bản).
 - [ ] 00.06 Cài dependency bằng Bun/npm trên Node tương thích; xác minh phiên bản/package URL tồn tại, tạo và commit một lockfile; dùng frozen install trong CI.
-- [ ] 00.07 Chạy TypeScript check và production build; xử lý tất cả lỗi dependency, type, asset và worker bundling.
+- [x] 00.07 Baseline v0.4.1 TypeScript + Vite production build pass trong CI run 45748267363; bản v0.5 cần chạy lại.
 - [ ] 00.08 Chạy unit test và E2E hiện có; sửa lỗi và bổ sung fixture hồi quy nếu phát hiện.
 - [x] 00.09 Source cấu hình Wrangler production: Worker excel, ./dist + worker/index.ts, SPA fallback, D1 binding DB; phiên bản Wrangler pin. Chưa xác minh deploy.
 - [ ] 00.10 Kiểm tra kích thước từng asset theo giới hạn Workers; xác minh WASM, MIME, CORS, cache và URL worker sau deploy.
@@ -108,13 +108,15 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 
 - [x] 03.01 Import một workbook đang hoạt động, danh sách sheet, tên file và số dòng/cột.
 - [x] 03.02 Phát hiện cột tương thích khi đổi file và áp dụng cấu hình JSON theo tên.
-- [ ] 03.03 Quản lý nhiều file đồng thời: source ID ổn định, alias, sheet/table riêng; thêm/xóa/đổi tên.
-- [ ] 03.04 Import nhiều sheet từ một workbook; CSV/TSV encoding, delimiter, preview có xác nhận.
+- [x] 03.03 Source v0.5 quản lý nhiều file đồng thời, ID ổn định, alias, bảng riêng, thêm/xóa/đổi tên; chờ E2E.
+- [x] 03.04a Source mở nhiều sheet độc lập từ một workbook, tránh parse lại workbook khi chuyển nguồn.
+- [ ] 03.04b CSV/TSV encoding, delimiter, preview có xác nhận.
 - [ ] 03.05 Chọn hàng header, vùng dữ liệu, bỏ dòng tiêu đề phụ và dòng tổng; hỗ trợ merge-cell có quy tắc rõ.
 - [ ] 03.06 Schema editor: đổi tên, kiểu cột, định dạng ngày/số theo locale vi-VN; giữ mã định danh/leading zeros.
 - [ ] 03.07 Mapping tên cột cũ/mới, phát hiện thiếu/thừa/sai kiểu, xem diff trước khi thay nguồn.
 - [ ] 03.08 Data profiling: null, distinct, duplicate, min/max, phân bố và tỷ lệ lỗi parse.
-- [ ] 03.09 Thay từng source, batch refresh nhiều source, báo trạng thái và khả năng rollback nếu lỗi.
+- [x] 03.09a Source thay từng nguồn bằng transaction, kiểm tra cột và kiểu, revision chống stale query, giữ nguồn cũ khi lỗi.
+- [ ] 03.09b Batch refresh nhiều nguồn và preview schema diff tương tác.
 - [ ] 03.10 Fixture nhiều nguồn, header bất thường, file lỗi/empty, mapping sai và thay file tương thích.
 
 **Nghiệm thu:** hai file và nhiều sheet có thể tồn tại độc lập; thay file không làm mất mapping hay thay đổi các bảng không liên quan; không silently truncate dữ liệu.
@@ -354,3 +356,13 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source CI workflow for Node unit/integration and build/Playwright.
 - [x] Source distinct error codes for account switch, settings conflict and expired session; tab notification after successful session boot.
 - [ ] Verify CI results, D1/Google integration, two real accounts and device restore before closing Auth MVP.
+
+### Multi-source v0.5
+
+- [x] CI baseline c0b3a4a: 17/17 unit/integration tests pass, npm install và production build pass (run 45748267363).
+- [x] Sửa runner Ubuntu 26.04 không tương thích Playwright 1.55.1 bằng pin ubuntu-24.04; chờ CI mới.
+- [x] Source quản lý bảng DuckDB độc lập, alias, sheet, thay nguồn, revision, giới hạn workspace và lưu config theo nguồn trong RAM.
+- [x] Source regression test cho SQL table ID, schema compatibility, alias và budget.
+- [ ] E2E multi-source và build v0.5 pass; xác minh production trước merge.
+- [ ] Persist toàn bộ cấu hình workspace theo tài khoản (không lưu file hoặc kết quả); schema version/migration, restore mapping nguồn kỳ mới. Hiện chỉ lưu cấu hình/mẫu nguồn hiện tại như v0.4.
+- [ ] Hoàn tất header/range, kiểu cột, profiling, mapping và batch refresh trước Phase 04.

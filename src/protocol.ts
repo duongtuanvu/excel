@@ -1,10 +1,16 @@
-import type { Config, Report, Source } from './model';
-export type Requests = {
-  demo: { input: null; output: Source };
-  import: { input: { name: string; bytes: ArrayBuffer }; output: Source };
-  sheet: { input: { sheet: string }; output: Source };
-  report: { input: { config: Config; page: number }; output: Report };
-  export: { input: { config: Config; format: 'xlsx' | 'csv' }; output: { bytes: ArrayBuffer; name: string; mime: string } };
+import type { Config, Report } from './model';
+import type { Workspace } from './source-model';
+type SourceVersion={sourceId:string;revision:number};
+export type Requests={
+  demo:{input:null;output:Workspace};
+  import:{input:{name:string;bytes:ArrayBuffer};output:Workspace};
+  sheet:{input:{sheet:string};output:Workspace};
+  activateSource:{input:{sourceId:string};output:Workspace};
+  renameSource:{input:{sourceId:string;alias:string};output:Workspace};
+  removeSource:{input:{sourceId:string};output:Workspace};
+  replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
+  report:{input:SourceVersion&{config:Config;page:number};output:Report};
+  export:{input:SourceVersion&{config:Config;format:'xlsx'|'csv'};output:{bytes:ArrayBuffer;name:string;mime:string}};
 };
-export type Request = { [K in keyof Requests]: { id: number; type: K; input: Requests[K]['input'] } }[keyof Requests];
-export type Response = { id: number; ok: true; data: unknown } | { id: number; ok: false; error: string };
+export type Request={ [K in keyof Requests]:{id:number;type:K;input:Requests[K]['input']} }[keyof Requests];
+export type Response={id:number;ok:true;data:unknown}|{id:number;ok:false;error:string};

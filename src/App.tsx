@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { EngineClient } from './worker-client';
 import UserCenter from './UserCenter';
+import SourceManager from './SourceManager';
+import type { ManagedSource, Workspace } from './source-model';
 import { initials } from './user-model';
 import type { AccountSnapshot, AccountSettings } from './account-model';
 import { defaultSettings } from './account-model';
@@ -103,7 +105,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   const restored = useRef(false);
   const [userOpen, setUserOpen] = useState(false);
   const userButton = useRef<HTMLButtonElement>(null);
-  const [source, setSource] = useState<Source | null>(null);
+  const [source, setSource] = useState<ManagedSource | null>(null);
+  const [sources, setSources] = useState<ManagedSource[]>([]);
+  const sourceConfigs = useRef(new Map<string, Config>());
+  const replaceInput = useRef<HTMLInputElement>(null);
   const [config, setConfig] = useState<Config>(defaultConfig([]));
   const [snapshot, setSnapshot] = useState<{ config: Config; source: Source; requestedPage: number; report: Report } | null>(null);
   const [page, setPage] = useState(0), [groupPage, setGroupPage] = useState(0);
@@ -123,8 +128,11 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     try { engine = new EngineClient(); client.current = engine; }
     catch (e) { setError(errorText(e)); setBusy(''); return; }
     busyRef.current = true;
-    engine.request('demo', null).then(s => {
+    engine.request('demo', null).then(ws => {
       if (!active) return;
+      const s = ws.active;
+      setSources(ws.sources);
+      if (!s) return;
       setSource(s);
       const saved = session.settings.lastConfig;
       const mapped = saved ? reconcileConfig(saved, s.columns) : null;
@@ -146,7 +154,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     let active = true;
     setLoading(true); setQueryError('');
     const timer = window.setTimeout(() => {
-      engine.request('report', { config, page }).then(report => {
+      engine.request('report', { config, page, sourceId: source.id, revision: source.revision }).then(report => {
         if (active) setSnapshot({ config, source, requestedPage: page, report });
       }).catch(e => { if (active) { setSnapshot(null); setQueryError(errorText(e)); } })
       .finally(() => { if (active) setLoading(false); });
@@ -165,41 +173,47 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   function filterPatch(i: number, update: Partial<Filter>) {
     patch({ filters: config.filters.map((f,j) => j === i ? {...f,...update} : f) });
   }
-  function applySource(next: Source, demo = false) {
-    setSource(next); setSnapshot(null); setPage(0); setGroupPage(0);
-    if (demo) {
-      setConfig({ ...defaultConfig(next.columns), title: 'Tổng quan kinh doanh', groups: ['Khu vực'], metric: 'Doanh thu', aggregate: 'sum' });
-    } else if (source) {
-      const saved = session.settings.lastConfig;
-      if (!restored.current && saved) {
-        const previous = reconcileConfig(saved, next.columns);
-        if (!previous.missing.length) {
-          setConfig(previous.config); restored.current = true;
-          setNotice('Đã khôi phục cấu hình của tài khoản.'); return;
-        }
+  function applyWorkspace(ws: Workspace) {
+    if (source) sourceConfigs.current.set(source.id, config);
+    const live = new Set(ws.sources.map(s => s.id));
+    for (const id of sourceConfigs.current.keys()) if (!live.has(id)) sourceConfigs.current.delete(id);
+    const next = ws.active;
+    setSources(ws.sources); setSource(next); setSnapshot(null); setPage(0); setGroupPage(0);
+    if (!next) { setConfig(defaultConfig([])); return; }
+    const existing = sourceConfigs.current.get(next.id);
+    if (existing) {
+      const mapped = reconcileConfig(existing, next.columns);
+      if (!mapped.missing.length) { setConfig(mapped.config); return; }
+      setNotice('SOURCE_CONFIG_MISMATCH: Cấu hình cũ không còn tương thích; đã tạo cấu hình mới.');
+    }
+    const saved = session.settings.lastConfig;
+    if (!restored.current && saved && !next.demo) {
+      const mapped = reconcileConfig(saved, next.columns);
+      if (!mapped.missing.length) {
+        setConfig(mapped.config); restored.current = true;
+        setNotice('Đã khôi phục cấu hình của tài khoản.'); return;
       }
-      const mapped = reconcileConfig(config, next.columns);
-      if (mapped.missing.length) {
-        setConfig(defaultConfig(next.columns));
-        setNotice('Đã tạo cấu hình mới vì nguồn dữ liệu không khớp mẫu cũ: ' + mapped.missing.join(', ') + '.');
-      } else setConfig(mapped.config);
-    } else setConfig(defaultConfig(next.columns));
+    }
+    setConfig(next.demo ? { ...defaultConfig(next.columns), title:'Tổng quan kinh doanh', groups:['Khu vực'], metric:'Doanh thu', aggregate:'sum' } : defaultConfig(next.columns));
   }
-  async function sourceAction(label: string, operation: (engine: EngineClient) => Promise<Source>, demo = false) {
-    if (busyRef.current || !client.current) return;
+  async function sourceAction(label: string, operation: (engine: EngineClient) => Promise<Workspace>) {
+    if (busyRef.current || saving || accountBusy || !client.current) return;
     busyRef.current = true; setBusy(label); setError(''); setNotice(''); setQueryError('');
-    try { applySource(await operation(client.current), demo); }
+    try { applyWorkspace(await operation(client.current)); }
     catch (e) { setError(errorText(e)); }
     finally { busyRef.current = false; setBusy(''); }
   }
-  function importFile(file?: File) {
+  function importFile(file?: File, replace = false) {
     if (!file) return;
     if (!/\.(xlsx|xls|csv|tsv)$/i.test(file.name) || file.size <= 0 || file.size > LIMITS.fileBytes) {
-      setError('Chọn file Excel, CSV hoặc TSV hợp lệ, tối đa 25 MB.'); return;
+      setError('FILE_INVALID: Chọn file Excel, CSV hoặc TSV hợp lệ, tối đa 25 MiB.'); return;
     }
+    if (replace && !source) return;
     void sourceAction('Đang đọc ' + file.name + '…', async engine => {
       const bytes = await file.arrayBuffer();
-      return engine.request('import', { name: file.name, bytes }, [bytes]);
+      return replace && source
+        ? engine.request('replaceSource', { name:file.name, bytes, sourceId:source.id, revision:source.revision }, [bytes])
+        : engine.request('import', { name:file.name, bytes }, [bytes]);
     });
   }
   async function openTemplate(file?: File) {
@@ -215,10 +229,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     finally { busyRef.current = false; setBusy(''); }
   }
   async function exportData(format: 'xlsx' | 'csv') {
-    if (!client.current || !result || busyRef.current || result.truncated) return;
+    if (!client.current || !source || !result || busyRef.current || result.truncated) return;
     busyRef.current = true; setBusy('Đang tạo file ' + format.toUpperCase() + '…'); setError('');
     try {
-      const exported = await client.current.request('export', { config, format });
+      const exported = await client.current.request('export', { config, format, sourceId: source.id, revision: source.revision });
       download(exported.bytes, exported.name, exported.mime);
     } catch (e) { setError(errorText(e)); }
     finally { busyRef.current = false; setBusy(''); }
@@ -244,7 +258,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.4</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -268,6 +282,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       onDismiss={() => { setUserOpen(false); requestAnimationFrame(() => userButton.current?.focus()); }}
     />}
     <input ref={fileInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn dữ liệu Excel" onChange={(e: ChangeEvent<HTMLInputElement>) => { importFile(e.target.files?.[0]); e.target.value = ''; }}/>
+    <input ref={replaceInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn file thay thế" onChange={e=>{importFile(e.target.files?.[0],true);e.target.value='';}}/>
     <input ref={templateInput} hidden type="file" accept=".json,application/json" aria-label="Chọn mẫu JSON" onChange={e => { void openTemplate(e.target.files?.[0]); e.target.value = ''; }}/>
     <div className={'layout ' + (!configOpen ? 'wide' : '')}>
       {configOpen && <aside className="sidebar" aria-label="Cấu hình báo cáo">
@@ -276,10 +291,13 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
           <button className={'dropzone ' + (dragging ? 'dragging' : '')} disabled={locked} onClick={() => fileInput.current?.click()} onDragOver={e => { e.preventDefault(); if (!locked) setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
             <span className="upload-icon"><Icon name="upload" size={24}/></span><strong>Thả file Excel vào đây</strong><small>hoặc bấm để chọn file</small><small>XLSX, XLS, CSV, TSV · 25 MB</small>
           </button>
-          {source && <><div className="source-file"><span className="source-icon"><Icon name="grid"/></span><div><strong title={source.name}>{source.name}</strong><small>{fmt.format(source.rows)} dòng · {columns.length} cột</small></div></div>
-            <Field label="Sheet"><select disabled={locked} value={source.sheet} onChange={e => { const sheet = e.target.value; void sourceAction('Đang chuyển sheet…', engine => engine.request('sheet', {sheet})); }}>{source.sheets.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
-          </>}
-          <button className="button text-button" disabled={locked} onClick={() => void sourceAction('Đang tạo dữ liệu mẫu…', engine => engine.request('demo', null), true)}><Icon name="refresh" size={15}/> Nạp dữ liệu mẫu</button>
+          <SourceManager sources={sources} active={source} disabled={locked}
+            onActivate={id=>void sourceAction('Đang chuyển nguồn…',e=>e.request('activateSource',{sourceId:id}))}
+            onSheet={sheet=>void sourceAction('Đang mở sheet…',e=>e.request('sheet',{sheet}))}
+            onRename={(id,alias)=>void sourceAction('Đang đổi tên nguồn…',e=>e.request('renameSource',{sourceId:id,alias}))}
+            onRemove={id=>void sourceAction('Đang xóa nguồn…',e=>e.request('removeSource',{sourceId:id}))}
+            onReplace={()=>replaceInput.current?.click()}/>
+          <button className="button text-button" disabled={locked} onClick={() => void sourceAction('Đang tạo dữ liệu mẫu…', engine => engine.request('demo', null))}><Icon name="refresh" size={15}/> Nạp dữ liệu mẫu</button>
         </Panel>
         <fieldset className="settings" disabled={locked || !source}>
           <Panel title="Cấu hình báo cáo" icon="settings">
@@ -319,7 +337,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       </aside>}
       <main className="main">
         <div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={14}/><span>Excel reports</span><span className="spacer"/><span className="engine-status"><span className={'dot ' + (!source ? 'inactive' : '')}/>{source ? 'DuckDB · Ready' : 'DuckDB · Đang khởi tạo'}</span></div>
-        <div className="hero"><div><div className="eyebrow">DYNAMIC REPORT / 01</div><h1>{config.title || 'Báo cáo tổng hợp'}</h1><p>{source ? source.name + '  ·  ' + source.sheet : 'Import file để bắt đầu phân tích dữ liệu'}</p></div><div className="export-buttons"><button className="button" disabled={locked || !result || result.truncated} onClick={() => void exportData('csv')}><Icon name="download"/> CSV</button><button className="button primary" disabled={locked || !result || result.truncated} onClick={() => void exportData('xlsx')}><Icon name="download"/> Xuất Excel</button></div></div>
+        <div className="hero"><div><div className="eyebrow">DYNAMIC REPORT / 01</div><h1>{config.title || 'Báo cáo tổng hợp'}</h1><p>{source ? source.alias + '  ·  ' + source.sheet : 'Import file để bắt đầu phân tích dữ liệu'}</p></div><div className="export-buttons"><button className="button" disabled={locked || !result || result.truncated} onClick={() => void exportData('csv')}><Icon name="download"/> CSV</button><button className="button primary" disabled={locked || !result || result.truncated} onClick={() => void exportData('xlsx')}><Icon name="download"/> Xuất Excel</button></div></div>
         {busy && <div className="notice working" role="status"><span className="spinner"/>{busy}</div>}
         {error && <div className="notice error" role="alert">{error}<button className="button icon-button" aria-label="Đóng thông báo lỗi" onClick={() => setError('')}><Icon name="close" size={15}/></button></div>}
         {notice && <div className="notice" role="status">{notice}<button className="button icon-button" aria-label="Đóng thông báo" onClick={() => setNotice('')}><Icon name="close" size={15}/></button></div>}

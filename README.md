@@ -1,6 +1,6 @@
-# KySheet v0.4 — Excel report automation
+# KySheet v0.5 — Excel report automation
 
-Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Phiên bản v0.4 yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
+Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Phiên bản v0.5 yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
 
 ## Build và kiểm thử
 
@@ -84,7 +84,7 @@ Không có SQL editor hoặc execute SQL của người dùng; tên cột nội 
 
 ## Giới hạn
 
-- Một workbook, một sheet đang hoạt động; chưa có JOIN nhiều file, pivot column, report canvas kéo thả, calculated field hoặc dashboard nhiều widget.
+- Nhiều workbook và sheet độc lập trong phiên; mỗi lần xem báo cáo một nguồn; chưa có JOIN nhiều file, pivot column, report canvas kéo thả, calculated field hoặc dashboard nhiều widget.
 - 25 MB file, 100.000 dòng, 100 cột, 1 triệu ô, khoảng 40 triệu ký tự CSV sau chuẩn hóa; giới hạn bảo vệ thiết bị, không phải cam kết chạy được mọi file đạt ngưỡng.
 - 5.000 nhóm; nếu vượt, cảnh báo và chặn export thay vì xuất thiếu. Bảng dữ liệu nguồn 50 dòng/trang, chart 12 nhóm đầu.
 - Giả định hàng dữ liệu không trống đầu tiên là tiêu đề. Không tính lại công thức Excel; chỉ dùng giá trị cache. Ngày trong Excel có thể được chuyển thành ISO; kiểu của cột dữ liệu trộn là text. Mã dạng chuỗi có số 0 ở đầu được giữ dạng text; mã số có format Excel đặc biệt có thể mất format gốc.
@@ -119,3 +119,7 @@ OAuth transport fix: Cloudflare workerd does not support outbound fetch redirect
 ## Auth QA (v0.4.1)
 
 `npm test` includes account API integration tests with actual SQLite migration SQL using Node 22 node:sqlite and a structural D1 adapter; Google responses are mocked in the OAuth flow. Playwright account fixture is test-only; no guest or bypass endpoint exists in production. GitHub Actions runs unit and build/E2E jobs. These tests do not replace real D1/OAuth, multi-device, or production smoke testing. Settings conflicts have a distinct SETTINGS_CONFLICT code; an account switch invalidates a stale workspace instead of saving across accounts.
+
+## Multi-source v0.5
+
+Thêm file sẽ tạo bảng riêng; file thật đầu tiên thay demo mặc định. Chọn sheet sẽ mở một nguồn độc lập hoặc chuyển tới nguồn đã mở. Đổi alias, xóa, thay file của nguồn hiện tại. Thay file kiểm tra mọi cột cũ theo tên/kiểu, chọn sheet cùng tên (hoặc file chỉ có một sheet), giữ ID và tăng revision; transaction giữ bảng cũ nếu import lỗi. Cấu hình riêng từng nguồn giữ trong RAM của phiên; D1 vẫn chỉ lưu mẫu/cấu hình hiện tại theo thao tác chủ động. Không có JOIN hoặc lưu toàn bộ workspace đa nguồn vào D1. Giới hạn 12 nguồn, 32 sheet/workbook, tổng 50 MiB file, 2 triệu ô workbook/bảng và 50 triệu ký tự CSV; giới hạn sau parse không loại bỏ mọi rủi ro zip bomb. CI runner pin ubuntu-24.04 để tương thích Playwright 1.55.1.

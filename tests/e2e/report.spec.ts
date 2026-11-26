@@ -30,3 +30,20 @@ test('demo, import, filter, template, workbook export', async ({ page }) => {
   await page.setViewportSize({width:390,height:844});
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('multiple independent sources preserve configuration and failed replacement keeps old table',async({page})=>{
+  await page.goto('/');await expect(page.getByTestId('filtered-count')).toHaveText('180');
+  const file=(name:string,rows:(string|number)[][])=>{const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'Sales');return {name,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(wb,{type:'buffer',bookType:'xlsx'})};};
+  await page.getByLabel('Chọn dữ liệu Excel').setInputFiles(file('a.xlsx',[['Region','Amount'],['North',10]]));
+  await expect(page.getByTestId('metric-total')).toHaveText('10');
+  await page.getByLabel('Tên báo cáo').fill('Private report A');
+  await page.getByLabel('Chọn dữ liệu Excel').setInputFiles(file('b.xlsx',[['Region','Amount'],['South',99]]));
+  await expect(page.getByTestId('metric-total')).toHaveText('99');
+  await page.getByRole('button',{name:'Mở nguồn a.xlsx · Sales',exact:true}).click();
+  await expect(page.getByTestId('metric-total')).toHaveText('10');await expect(page.getByLabel('Tên báo cáo')).toHaveValue('Private report A');
+  await page.getByLabel('Chọn file thay thế').setInputFiles(file('bad.xlsx',[['Other'],['x']]));
+  await expect(page.getByRole('alert')).toContainText('SOURCE_SCHEMA_MISMATCH');await expect(page.getByTestId('metric-total')).toHaveText('10');
+  await page.getByLabel('Chọn file thay thế').setInputFiles(file('new.xlsx',[['Amount','Region'],[42,'North']]));
+  await expect(page.getByTestId('metric-total')).toHaveText('42');await expect(page.getByLabel('Tên báo cáo')).toHaveValue('Private report A');
+  await page.getByRole('button',{name:'Mở nguồn b.xlsx · Sales',exact:true}).click();await expect(page.getByTestId('metric-total')).toHaveText('99');
+});

@@ -4,10 +4,55 @@ import { mvpWasm, ehWasm, mvpWorker, ehWorker } from 'duckdb-assets';
 import { LIMITS, normalizeHeaders, compileReport, safeCsvCell } from './model';
 import type { Cell, Column, Kind, Source, Config, Report, Group } from './model';
 import type { Request, Response } from './protocol';
+import { WORKSPACE_LIMITS, sourceTable, uniqueAlias, normalizeAlias, replacementIssues, replacementSheet, checkWorkspaceBudget } from './source-model';
+import type { ManagedSource, Workspace, BookBudget } from './source-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
-let workbook: XLSX.WorkBook | null = null;
-let source: Source | null = null;
+type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
+type Entry = {source:ManagedSource;chars:number};
+const books = new Map<string,Book>();
+const sources = new Map<string,Entry>();
+let activeId:string|null=null;
+let nextSource=0, nextBook=0;
+const workspace=():Workspace=>({active:activeId?sources.get(activeId)?.source??null:null,sources:Array.from(sources.values(),e=>e.source)});
+function entry(id:string,revision?:number):Entry{
+  const found=sources.get(id);
+  if(!found)throw new Error('SOURCE_NOT_FOUND: Nguồn dữ liệu không tồn tại.');
+  if(revision!==undefined&&revision!==found.source.revision)throw new Error('SOURCE_STALE: Nguồn dữ liệu đã thay đổi. Hãy chạy lại báo cáo.');
+  return found;
+}
+function active():Entry{
+  if(!activeId)throw new Error('SOURCE_NOT_FOUND: Chưa có nguồn dữ liệu.');
+  return entry(activeId);
+}
+function bookFor(source:ManagedSource):Book{
+  const book=books.get(source.bookId);
+  if(!book)throw new Error('WORKBOOK_NOT_FOUND: Không tìm thấy workbook.');
+  return book;
+}
+function releaseBooks(){
+  const referenced=new Set(Array.from(sources.values(),e=>e.source.bookId));
+  for(const id of books.keys())if(!referenced.has(id))books.delete(id);
+}
+function makeBook(data:XLSX.WorkBook,name:string,bytes:number,demo=false):Book{
+  if(!data.SheetNames.length||data.SheetNames.length>WORKSPACE_LIMITS.sheetsPerBook)throw new Error('WORKBOOK_LIMIT: Workbook phải có 1–32 sheet.');
+  let cells=0;
+  for(const sheet of data.SheetNames){
+    const ws=data.Sheets[sheet], ref=ws?.['!fullref']||ws?.['!ref'];
+    if(!ref)continue;
+    const r=XLSX.utils.decode_range(ref), n=(r.e.r-r.s.r+1)*(r.e.c-r.s.c+1);
+    if(!Number.isSafeInteger(n)||n<0)throw new Error('WORKBOOK_RANGE_INVALID: Vùng dữ liệu không hợp lệ.');
+    cells+=n;
+    if(cells>WORKSPACE_LIMITS.bookCells)throw new Error('WORKBOOK_CELLS_LIMIT: Workbook vượt 2 triệu ô.');
+  }
+  return {id:'b'+(++nextBook),name,data,budget:{bytes,cells,sheets:data.SheetNames.length},demo};
+}
+function readBook(name:string,bytes:ArrayBuffer):Book{
+  if(!bytes.byteLength||bytes.byteLength>LIMITS.fileBytes)throw new Error('FILE_SIZE_INVALID: File phải không rỗng và tối đa 25 MiB.');
+  if(!/\.(xlsx|xls|csv|tsv)$/i.test(name))throw new Error('FILE_FORMAT_INVALID: Định dạng file không được hỗ trợ.');
+  const data=XLSX.read(bytes,{type:'array',cellDates:true,raw:true,dense:true,sheetRows:LIMITS.rows+2});
+  return makeBook(data,name,bytes.byteLength);
+}
 let database: duckdb.AsyncDuckDB | null = null;
 let connection: duckdb.AsyncDuckDBConnection | null = null;
 
@@ -81,33 +126,47 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string) {
   return { csv: csv.join('\n'), next: { name, sheets: [...book.SheetNames], sheet, rows: count, columns } satisfies Source };
 }
 
-async function activate(book: XLSX.WorkBook, sheet: string, name: string): Promise<Source> {
-  const { csv, next } = prepare(book, sheet, name);
-  const { db, conn } = await connect();
-  const path = 'report_import.csv';
+async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry):Promise<Workspace>{
+  const {csv,next}=prepare(book.data,sheet,book.name);
+  if(previous){
+    const issues=replacementIssues(previous.source.columns,next.columns);
+    if(issues.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+issues.join(', ')+'. Nguồn cũ được giữ nguyên.');
+  }
+  const excluded=new Set([previous?.source.id,dropDemo?.source.id]);
+  const remaining=Array.from(sources.values()).filter(e=>!excluded.has(e.source.id));
+  const referenced=new Set(remaining.map(e=>e.source.bookId));
+  referenced.add(book.id);
+  const allBooks=Array.from(books.values()).filter(b=>referenced.has(b.id)&&b.id!==book.id).concat(book);
+  checkWorkspaceBudget(allBooks.map(b=>b.budget),[...remaining.map(e=>({rows:e.source.rows,columns:e.source.columns,chars:e.chars})),{rows:next.rows,columns:next.columns,chars:csv.length}]);
+  const id=previous?.source.id??'s'+(++nextSource);
+  const alias=previous?.source.alias??uniqueAlias(book.demo?'Dữ liệu mẫu':book.name+' · '+sheet,remaining.map(e=>e.source.alias));
+  const managed:ManagedSource={...next,id,alias,bookId:book.id,revision:(previous?.source.revision??0)+1,demo:book.demo};
+  const table=sourceTable(id), {db,conn}=await connect(), path='report_import.csv';
   await conn.query('DROP TABLE IF EXISTS report_stage');
   try {
-    if (next.rows) {
-      await db.registerFileText(path, csv);
+    if(next.rows){
+      await db.registerFileText(path,csv);
       await conn.query("CREATE TABLE report_stage AS SELECT * FROM read_csv('report_import.csv', header=true, all_varchar=true, delim=',', quote='\u0022', escape='\u0022', nullstr='', sample_size=-1)");
-      const result = await conn.query('SELECT COUNT(*) AS n FROM report_stage');
-      if (Number(result.get(0)?.n) !== next.rows) throw new Error('Số dòng nhập không khớp.');
-      const schema = await conn.query('SELECT * FROM report_stage LIMIT 0');
-      if (schema.schema.fields.length !== next.columns.length || schema.schema.fields.some((f, i) => f.name !== next.columns[i].id)) throw new Error('Cấu trúc cột nhập không khớp.');
-    } else {
-      await conn.query('CREATE TABLE report_stage (' + next.columns.map(c => '"' + c.id + '" VARCHAR').join(', ') + ')');
-    }
+      const count=await conn.query('SELECT COUNT(*) AS n FROM report_stage');
+      if(Number(count.get(0)?.n)!==next.rows)throw new Error('SOURCE_ROW_MISMATCH: Số dòng nhập không khớp.');
+      const schema=await conn.query('SELECT * FROM report_stage LIMIT 0');
+      if(schema.schema.fields.length!==next.columns.length||schema.schema.fields.some((f,k)=>f.name!==next.columns[k].id))throw new Error('SOURCE_COLUMN_MISMATCH: Cấu trúc cột nhập không khớp.');
+    }else await conn.query('CREATE TABLE report_stage ('+next.columns.map(c=>'"'+c.id+'" VARCHAR').join(', ')+')');
     await conn.query('BEGIN TRANSACTION');
     try {
-      await conn.query('DROP TABLE IF EXISTS report_data');
-      await conn.query('ALTER TABLE report_stage RENAME TO report_data');
+      if(previous)await conn.query('DROP TABLE '+table);
+      if(dropDemo)await conn.query('DROP TABLE '+sourceTable(dropDemo.source.id));
+      await conn.query('ALTER TABLE report_stage RENAME TO '+table);
       await conn.query('COMMIT');
-    } catch (e) { await conn.query('ROLLBACK'); throw e; }
-    workbook = book; source = next;
-    return next;
-  } finally {
-    if (next.rows) await db.dropFile(path).catch(() => {});
-    await conn.query('DROP TABLE IF EXISTS report_stage').catch(() => {});
+    }catch(error){await conn.query('ROLLBACK');throw error;}
+    if(dropDemo)sources.delete(dropDemo.source.id);
+    books.set(book.id,book);
+    sources.set(id,{source:managed,chars:csv.length});
+    activeId=id;releaseBooks();
+    return workspace();
+  }finally{
+    if(next.rows)await db.dropFile(path).catch(()=>{});
+    await conn.query('DROP TABLE IF EXISTS report_stage').catch(()=>{});
   }
 }
 
@@ -132,9 +191,9 @@ function convert(v: unknown, kind: Kind): Cell {
   if (kind === 'boolean') return String(v) === 'true';
   return String(v);
 }
-async function makeReport(config: Config, page: number): Promise<Report> {
-  if (!source || !connection) throw new Error('Chưa có nguồn dữ liệu.');
-  const query = compileReport(config, source.columns);
+async function makeReport(config: Config, page: number, source:ManagedSource): Promise<Report> {
+  if (!connection) throw new Error('ENGINE_NOT_READY: Chưa có nguồn dữ liệu.');
+  const query = compileReport(config, source.columns, sourceTable(source.id));
   const totals = await connection.query(query.totals);
   const total = totals.get(0);
   const filtered = Number(total?.n ?? 0);
@@ -150,9 +209,9 @@ async function makeReport(config: Config, page: number): Promise<Report> {
   return { total: numberOrNull(total?.value), filtered, groups, truncated: grouped.numRows > LIMITS.groups, preview, page: safePage };
 }
 
-async function exportReport(config: Config, format: 'xlsx' | 'csv') {
-  if (!source || !connection) throw new Error('Chưa có nguồn dữ liệu.');
-  const report = await makeReport(config, 0);
+async function exportReport(config: Config, format: 'xlsx' | 'csv', source:ManagedSource) {
+  if (!connection) throw new Error('ENGINE_NOT_READY: Chưa có nguồn dữ liệu.');
+  const report = await makeReport(config, 0, source);
   if (report.truncated) throw new Error('Báo cáo có quá 5.000 nhóm. Hãy thêm bộ lọc trước khi xuất.');
   const label = config.aggregate === 'count' ? 'Số dòng' : config.aggregate.toUpperCase() + ' ' + config.metric;
   const head = [...config.groups, label, 'Số bản ghi'];
@@ -162,7 +221,7 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv') {
     const buffer = new TextEncoder().encode('\uFEFF' + summary.map(row => row.map(safeCsvCell).join(',')).join('\r\n'));
     return { bytes: buffer.buffer as ArrayBuffer, name: name + '.csv', mime: 'text/csv;charset=utf-8' };
   }
-  const raw = await connection.query(compileReport(config, source.columns).raw);
+  const raw = await connection.query(compileReport(config, source.columns, sourceTable(source.id)).raw);
   const rows: Cell[][] = [source.columns.map(c => c.name), ...Array.from(raw, row => source!.columns.map(c => convert(row?.[c.id], c.kind)))];
   const book = XLSX.utils.book_new();
   const kpi = XLSX.utils.aoa_to_sheet([['Báo cáo', config.title], ['Chỉ số', label], ['Giá trị', report.total], ['Số dòng sau lọc', report.filtered], ['Nguồn', source.name], ['Sheet', source.sheet]]);
@@ -177,22 +236,48 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv') {
   return { bytes, name: name + '.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 }
 
-async function handle(req: Request): Promise<unknown> {
-  switch (req.type) {
-    case 'demo': { const book = demoBook(); return activate(book, book.SheetNames[0], 'Dữ liệu mẫu.xlsx'); }
-    case 'import': {
-      if (!req.input.bytes.byteLength || req.input.bytes.byteLength > LIMITS.fileBytes) throw new Error('File phải nhỏ hơn hoặc bằng 25 MB và không được rỗng.');
-      if (!/\.(xlsx|xls|csv|tsv)$/i.test(req.input.name)) throw new Error('Định dạng file không được hỗ trợ.');
-      const book = XLSX.read(req.input.bytes, { type: 'array', cellDates: true, raw: true, dense: true, sheetRows: LIMITS.rows + 2 });
-      if (!book.SheetNames.length) throw new Error('Workbook không có sheet.');
-      return activate(book, book.SheetNames[0], req.input.name);
+async function handle(req: Request):Promise<unknown>{
+  switch(req.type){
+    case 'demo':{
+      const existing=Array.from(sources.values()).find(e=>e.source.demo);
+      if(existing){activeId=existing.source.id;return workspace();}
+      const book=makeBook(demoBook(),'Dữ liệu mẫu.xlsx',0,true);
+      return store(book,book.data.SheetNames[0]);
     }
-    case 'sheet': {
-      if (!workbook || !source) throw new Error('Chưa có workbook.');
-      return activate(workbook, req.input.sheet, source.name);
+    case 'import':{
+      const book=readBook(req.input.name,req.input.bytes);
+      const only=sources.size===1?Array.from(sources.values())[0]:undefined;
+      return store(book,book.data.SheetNames[0],undefined,only?.source.demo?only:undefined);
     }
-    case 'report': return makeReport(req.input.config, req.input.page);
-    case 'export': return exportReport(req.input.config, req.input.format);
+    case 'sheet':{
+      const current=active().source,book=bookFor(current);
+      const existing=Array.from(sources.values()).find(e=>e.source.bookId===book.id&&e.source.sheet===req.input.sheet);
+      if(existing){activeId=existing.source.id;return workspace();}
+      return store(book,req.input.sheet);
+    }
+    case 'activateSource':{
+      activeId=entry(req.input.sourceId).source.id;return workspace();
+    }
+    case 'renameSource':{
+      const item=entry(req.input.sourceId);
+      const alias=normalizeAlias(req.input.alias,Array.from(sources.values()).filter(e=>e!==item).map(e=>e.source.alias));
+      sources.set(item.source.id,{...item,source:{...item.source,alias}});
+      return workspace();
+    }
+    case 'removeSource':{
+      const item=entry(req.input.sourceId),{conn}=await connect();
+      await conn.query('DROP TABLE '+sourceTable(item.source.id));
+      sources.delete(item.source.id);
+      if(activeId===item.source.id)activeId=sources.keys().next().value??null;
+      releaseBooks();return workspace();
+    }
+    case 'replaceSource':{
+      const item=entry(req.input.sourceId,req.input.revision);
+      const book=readBook(req.input.name,req.input.bytes);
+      return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
+    }
+    case 'report':return makeReport(req.input.config,req.input.page,entry(req.input.sourceId,req.input.revision).source);
+    case 'export':return exportReport(req.input.config,req.input.format,entry(req.input.sourceId,req.input.revision).source);
   }
 }
 

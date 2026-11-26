@@ -80,7 +80,8 @@ export function sqlText(value: string): string {
   return "'" + value.replaceAll("'", "''") + "'";
 }
 
-export function compileReport(config: Config, columns: Column[]) {
+export function compileReport(config: Config, columns: Column[], table = 'report_data') {
+  if (table !== 'report_data' && !/^source_s[1-9][0-9]{0,14}$/.test(table)) throw new Error('SOURCE_ID_INVALID: Tên bảng không hợp lệ.');
   const checked = validateTemplate({ version: 1, config }).config;
   const column = (name: string) => {
     const c = columns.find(item => item.name === name);
@@ -108,7 +109,7 @@ export function compileReport(config: Config, columns: Column[]) {
     return numeric(f.column) + ' ' + op + ' ' + String(n);
   });
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
-  const source = ' FROM report_data' + where;
+  const source = ' FROM ' + table + where;
   const grouping = groups.length ? ' GROUP BY ' + groups.join(', ') : '';
   const projection = groups.map((g, i) => g + ' AS g' + i).concat([aggregate + ' AS value', 'COUNT(*) AS n']).join(', ');
   return {
