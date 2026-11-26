@@ -148,3 +148,6 @@ Chọn Cấu trúc cột → Chỉnh cấu trúc → đổi tên/kiểu → Ki�
 
 ## Import layout & mapping v0.5.4
 Sau khi mở nguồn, chọn Vùng dữ liệu và mapping để chỉnh dòng header, cột đầu và dòng/cột cuối (trống = tự mở rộng). Header gộp bị từ chối ở chế độ chọn vùng. Preview kiểm tra xung đột cấu hình; reset báo cáo cần xác nhận. Thay file có mapping ghép từng cột hiện tại với cột file mới, giữ mode chuyển kiểu, kiểm tra schema trước khi apply transaction. Lưu workspace để giữ layout và mapping. Không migration D1. Chưa có batch refresh, chọn vùng trước lần import đầu hoặc tự điền merge-cell.
+
+## Batch Refresh v0.5.5
+Mở ít nhất hai nguồn thật, chọn Cập nhật hàng loạt, gán file kỳ mới cho 2–12 nguồn, Kiểm tra hàng loạt rồi Áp dụng hàng loạt. Worker kiểm tra revision, schema, layout, conversion, mapping đã lưu, giới hạn và tạo bảng staging; toàn bộ bảng được đổi trong một transaction. Nếu một nguồn lỗi, không commit bất kỳ nguồn nào. Nguồn không chọn giữ nguyên, không tự lưu account. Không gửi file hoặc kết quả lên server. Tổng file mới 50 MiB; staging cap logic 100 MiB file, 4 triệu ô workbook/bảng, 100 triệu ký tự CSV kể cả bảng cũ. DuckDB memory 384 MB vẫn áp dụng; không bảo đảm heap thực tế, có thể cần chia batch. Nếu không xác nhận rollback, Worker chặn truy vấn đến khi reload. Chỉ hỗ trợ nguồn đã mở, không sửa mapping trong batch.

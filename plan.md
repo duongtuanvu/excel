@@ -421,5 +421,13 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] v0.5.3 CI 45771928085: 31 unit/integration, 12 E2E pass; auto merge main 7d66872.
 - [x] Source header/range selection, validation, preview and explicit report reset confirmation; persisted layout and mapped rules.
 - [x] Source replacement mapping per loaded source, strict conversion and compatibility checks, transactional apply.
-- [ ] CI and auto release v0.5.4; production smoke test.
-- [ ] Batch refresh multiple sources, merged-cell fill and import-time layout before initial source creation; separate follow-up.
+- [x] CI v0.5.4 run 45773649563: 34 unit/integration + 13 E2E pass; auto merge main 082c4c0 verified.
+- [ ] Production smoke test.
+- [x] Source batch refresh multiple opened sources in v0.5.5.
+- [ ] Merged-cell fill and import-time layout before initial source creation; separate follow-up.
+
+### Batch Refresh v0.5.5
+- [x] Source selection 2–12 loaded real sources, explicit file assignment, preview each, validation of schema/layout/previous mapping and revision.
+- [x] Source staging budgets, independent staging tables, single atomic transaction, metadata update only after commit, fail closed when rollback cannot be verified.
+- [x] Source responsive UI and unit/integration/E2E regression.
+- [ ] CI, auto release and production smoke test v0.5.5. Next: Data Model JOIN/UNION (v0.6.0). Batch does not restore unloaded slots or edit mapping during batch; use individual source mapping first. Browser memory limits are logical, not actual heap guarantees.

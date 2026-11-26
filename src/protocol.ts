@@ -4,6 +4,7 @@ import type { SavedSource } from './workspace-model';
 import type { SourceProfile, Distribution } from './profile-model';
 import type { SchemaRule, SchemaPreview } from './schema-model';
 import type { ImportLayout, LayoutPreview, ColumnMapping, ReplacementPreview, MappedPreview } from './import-model';
+import type { BatchFile, BatchPreview } from './batch-model';
 type SourceVersion={sourceId:string;revision:number};
 export type Requests={
   demo:{input:null;output:Workspace};
@@ -14,6 +15,8 @@ export type Requests={
   removeSource:{input:{sourceId:string};output:Workspace};
   replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
   restoreSource:{input:{slot:SavedSource;name:string;bytes:ArrayBuffer};output:Workspace};
+  previewBatch:{input:{files:BatchFile[]};output:BatchPreview};
+  applyBatch:{input:{files:BatchFile[]};output:Workspace};
   previewLayout:{input:SourceVersion&{layout:ImportLayout|null;config:Config};output:LayoutPreview};
   applyLayout:{input:SourceVersion&{layout:ImportLayout|null;config:Config;resetReport:boolean};output:{workspace:Workspace;config:Config}};
   inspectReplacement:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:ReplacementPreview};

@@ -14,6 +14,8 @@ import { convertSchemaCell, resolveSchema, remapSchemaConfig } from './schema-mo
 import type { SchemaRule, SchemaPreview, SchemaIssue } from './schema-model';
 import { resolveLayout,validateLayout,layoutConfig,suggestMapping,mappedRules } from './import-model';
 import type { SheetBounds,ImportLayout,ColumnMapping,LayoutPreview } from './import-model';
+import { validateBatchFiles,checkBatchPeak,batchStage,swapBatchTables } from './batch-model';
+import type { BatchFile,BatchPreview,BatchItemPreview } from './batch-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -22,6 +24,7 @@ const books = new Map<string,Book>();
 const sources = new Map<string,Entry>();
 let activeId:string|null=null;
 let nextSource=0, nextBook=0;
+let engineUnsafe=false;
 const workspace=():Workspace=>({active:activeId?sources.get(activeId)?.source??null:null,sources:Array.from(sources.values(),e=>e.source)});
 function entry(id:string,revision?:number):Entry{
   const found=sources.get(id);
@@ -153,6 +156,19 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaR
   return {csv:buildCsv?csv.join('\n'):'',next:{name,sheets:[...book.SheetNames],sheet,rows:count,columns} satisfies Source,originalColumns,schema,issues,chars,bounds,layout};
 }
 
+async function stageImport(db:duckdb.AsyncDuckDB,conn:duckdb.AsyncDuckDBConnection,table:string,path:string,prepared:ReturnType<typeof prepare>){
+  if(!/^(report_stage|batch_stage_source_s[1-9][0-9]{0,14})$/.test(table)||! /^(report_import|batch_import)\.csv$/.test(path))throw new Error('BATCH_STAGE_INVALID: Tên staging không hợp lệ.');
+  const {csv,next}=prepared;
+    if(next.rows){
+      await db.registerFileText(path,csv);
+      await conn.query("CREATE TABLE "+table+" AS SELECT * FROM read_csv('"+path+"', header=true, all_varchar=true, delim=',', quote='\u0022', escape='\u0022', nullstr='', sample_size=-1)");
+      const count=await conn.query('SELECT COUNT(*) AS n FROM '+table);
+      if(Number(count.get(0)?.n)!==next.rows)throw new Error('SOURCE_ROW_MISMATCH: Số dòng nhập không khớp.');
+      const schema=await conn.query('SELECT * FROM '+table+' LIMIT 0');
+      if(schema.schema.fields.length!==next.columns.length||schema.schema.fields.some((f,k)=>f.name!==next.columns[k].id))throw new Error('SOURCE_COLUMN_MISMATCH: Cấu trúc cột nhập không khớp.');
+    }else await conn.query('CREATE TABLE '+table+' ('+next.columns.map(c=>'"'+c.id+'" VARCHAR').join(', ')+')');
+}
+
 async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,restore?:SavedSource,edit?:ReturnType<typeof prepare>):Promise<Workspace>{
   const prepared=edit??prepare(book.data,sheet,book.name,previous?.source.schema??restore?.schema??[],true,previous?.source.layout??restore?.layout);
   const {csv,next,originalColumns,schema,issues,bounds,layout}=prepared;
@@ -177,14 +193,7 @@ async function store(book:Book,sheet:string,previous?:Entry,dropDemo?:Entry,rest
   const table=sourceTable(id), {db,conn}=await connect(), path='report_import.csv';
   await conn.query('DROP TABLE IF EXISTS report_stage');
   try {
-    if(next.rows){
-      await db.registerFileText(path,csv);
-      await conn.query("CREATE TABLE report_stage AS SELECT * FROM read_csv('report_import.csv', header=true, all_varchar=true, delim=',', quote='\u0022', escape='\u0022', nullstr='', sample_size=-1)");
-      const count=await conn.query('SELECT COUNT(*) AS n FROM report_stage');
-      if(Number(count.get(0)?.n)!==next.rows)throw new Error('SOURCE_ROW_MISMATCH: Số dòng nhập không khớp.');
-      const schema=await conn.query('SELECT * FROM report_stage LIMIT 0');
-      if(schema.schema.fields.length!==next.columns.length||schema.schema.fields.some((f,k)=>f.name!==next.columns[k].id))throw new Error('SOURCE_COLUMN_MISMATCH: Cấu trúc cột nhập không khớp.');
-    }else await conn.query('CREATE TABLE report_stage ('+next.columns.map(c=>'"'+c.id+'" VARCHAR').join(', ')+')');
+    await stageImport(db,conn,'report_stage',path,prepared);
     await conn.query('BEGIN TRANSACTION');
     try {
       if(previous)await conn.query('DROP TABLE '+table);
@@ -304,7 +313,87 @@ function mappedCandidate(item:Entry,name:string,bytes:ArrayBuffer,mapping:Column
  const prepared=prepare(book.data,sheet,book.name,rules,buildCsv,source.layout);
  return {book,sheet,prepared,mismatches:replacementIssues(source.columns,prepared.next.columns)};
 }
+type BatchCandidate={item:Entry;book:Book;prepared:ReturnType<typeof prepare>;managed:ManagedSource};
+function batchError(error:unknown):string{
+  // Do not surface SQL, raw cell contents or parser exception dumps.
+  if(error instanceof Error && /^(?:SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|BATCH)_[A-Z_]+:/.test(error.message))return error.message.slice(0,1000);
+  return 'BATCH_READ_FAILED: Không đọc được file hoặc vùng dữ liệu.';
+}
+function tableBudget(item:Entry):{rows:number;columns:Column[];chars:number}{
+  return {rows:item.source.rows,columns:item.source.columns,chars:item.chars};
+}
+function candidateBudget(item:BatchCandidate){
+  return {rows:item.prepared.next.rows,columns:item.prepared.next.columns,chars:item.prepared.chars};
+}
+function planBatch(input:BatchFile[],buildCsv:boolean){
+  const files=validateBatchFiles(input),candidates:BatchCandidate[]=[],results:BatchItemPreview[]=[];
+  const currentBooks=Array.from(books.values()),currentTables=Array.from(sources.values(),tableBudget);
+  let error:string|null=null;
+  for(const f of files){
+    const current=sources.get(f.sourceId);
+    const result:BatchItemPreview={sourceId:f.sourceId,revision:f.revision,alias:current?.source.alias??f.sourceId,fileName:f.name,previousRows:current?.source.rows??0,rows:null,addedColumns:[],error:null};
+    results.push(result);
+    try{
+      const item=entry(f.sourceId,f.revision),source=item.source;
+      if(source.demo)throw new Error('BATCH_SOURCE_INVALID: Chỉ thay nguồn thật đang mở.');
+      const book=readBook(f.name,f.bytes);
+      checkBatchPeak([...currentBooks.map(b=>b.budget),...candidates.map(c=>c.book.budget),book.budget],[...currentTables,...candidates.map(candidateBudget)]);
+      const sheet=replacementSheet(source.sheet,book.data.SheetNames);
+      const prepared=prepare(book.data,sheet,book.name,source.schema??[],buildCsv,source.layout);
+      result.rows=prepared.next.rows;
+      result.addedColumns=prepared.next.columns.filter(c=>!source.columns.some(old=>old.name===c.name)).map(c=>c.name);
+      if(prepared.issues.length)throw new Error('SCHEMA_CONVERSION_FAILED: '+prepared.issues.map(i=>i.name+' ('+i.invalid+' lỗi)').join(', '));
+      const mismatches=replacementIssues(source.columns,prepared.next.columns);
+      if(mismatches.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+mismatches.join(', '));
+      const {next,originalColumns,bounds,layout,schema}=prepared;
+      const managed:ManagedSource={...next,id:source.id,slotId:source.slotId,alias:source.alias,bookId:book.id,revision:source.revision+1,demo:false,originalColumns,bounds,...(schema.length?{schema}:{}),...(layout?{layout}:{})};
+      const candidate={item,book,prepared,managed};
+      checkBatchPeak([...currentBooks.map(b=>b.budget),...candidates.map(c=>c.book.budget),book.budget],[...currentTables,...candidates.map(candidateBudget),candidateBudget(candidate)]);
+      candidates.push(candidate);
+    }catch(e){result.error=batchError(e);}
+  }
+  if(results.every(r=>!r.error)){
+    try{
+      const replaced=new Set(candidates.map(c=>c.managed.id));
+      const remaining=Array.from(sources.values()).filter(e=>!replaced.has(e.source.id));
+      const retained=new Set(remaining.map(e=>e.source.bookId));
+      checkWorkspaceBudget([...currentBooks.filter(b=>retained.has(b.id)).map(b=>b.budget),...candidates.map(c=>c.book.budget)],[...remaining.map(tableBudget),...candidates.map(candidateBudget)]);
+    }catch(e){error=batchError(e);}
+  }
+  const preview:BatchPreview={items:results,ready:!error&&results.every(r=>!r.error),error};
+  return {candidates,preview};
+}
+async function applyBatch(input:BatchFile[]):Promise<Workspace>{
+  // Recheck the immutable file bytes, current revision and limits; never trust a UI preview.
+  const {candidates,preview}=planBatch(input,true);
+  if(!preview.ready)throw new Error('BATCH_PREFLIGHT_FAILED: '+(preview.error??preview.items.filter(r=>r.error).map(r=>r.alias+': '+r.error).join('; ')).slice(0,1600));
+  const {db,conn}=await connect(),path='batch_import.csv';
+  const stages=candidates.map(c=>batchStage(c.managed.id));
+  try{
+    for(let i=0;i<candidates.length;i++){
+      await conn.query('DROP TABLE IF EXISTS '+stages[i]);
+      try{await stageImport(db,conn,stages[i],path,candidates[i].prepared);}
+      catch{throw new Error('BATCH_STAGE_FAILED: Không thể tạo bảng tạm cho '+candidates[i].managed.alias+'. Chưa thay đổi bảng gốc.');}
+      finally{if(candidates[i].prepared.next.rows)await db.dropFile(path).catch(()=>{});}
+    }
+    try{await swapBatchTables(candidates.map(c=>c.managed.id),sql=>conn.query(sql));}
+    catch(e){
+      if(e instanceof Error&&e.message.startsWith('BATCH_ROLLBACK_FAILED:'))engineUnsafe=true;
+      throw e;
+    }
+    // No await or potentially failing SQL between commit and publishing metadata.
+    for(const c of candidates){
+      books.set(c.book.id,c.book);
+      sources.set(c.managed.id,{source:c.managed,chars:c.prepared.chars});
+    }
+    releaseBooks();
+    return workspace();
+  }finally{
+    if(!engineUnsafe)for(const stage of stages)await conn.query('DROP TABLE IF EXISTS '+stage).catch(()=>{});
+  }
+}
 async function handle(req: Request):Promise<unknown>{
+  if(engineUnsafe)throw new Error('ENGINE_RECOVERY_REQUIRED: Hãy tải lại trang vì không xác nhận được trạng thái transaction.');
   switch(req.type){
     case 'demo':{
       const existing=Array.from(sources.values()).find(e=>e.source.demo);
@@ -351,6 +440,8 @@ async function handle(req: Request):Promise<unknown>{
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
     }
+    case 'previewBatch':return planBatch(req.input.files,false).preview;
+    case 'applyBatch':return applyBatch(req.input.files);
     case 'previewLayout':{
       const item=entry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
