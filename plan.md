@@ -322,7 +322,7 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** CI và auto release v0.5.3; sau khi main cập nhật, triển khai header/range, mapping và batch refresh rồi JOIN/UNION.
+**Next action:** CI and release v0.6.0 Data Model, then Visual Transformation Pipeline, persistent definitions and dependency rebuild.
 
 **Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
@@ -430,4 +430,12 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source selection 2–12 loaded real sources, explicit file assignment, preview each, validation of schema/layout/previous mapping and revision.
 - [x] Source staging budgets, independent staging tables, single atomic transaction, metadata update only after commit, fail closed when rollback cannot be verified.
 - [x] Source responsive UI and unit/integration/E2E regression.
-- [ ] CI, auto release and production smoke test v0.5.5. Next: Data Model JOIN/UNION (v0.6.0). Batch does not restore unloaded slots or edit mapping during batch; use individual source mapping first. Browser memory limits are logical, not actual heap guarantees.
+- [x] CI v0.5.5 run 45775303303: 37 unit/integration + 14 E2E pass; release main cf3a91a verified.
+- [ ] Production smoke test. Batch does not restore unloaded slots or edit mapping during batch; use individual source mapping first. Browser memory limits are logical, not actual heap guarantees.
+
+### Data Model v0.6.0
+- [x] Source two raw tables, four JOIN types, up to three composite keys, exact cardinality and unmatched counts, duplicate warnings and explicit expansion confirmation.
+- [x] Source UNION/UNION ALL explicit column mapping, matching kinds, output caps; readonly materialized table available in report/export/profile.
+- [x] Source dependency revision invalidation; stale tables cannot query or export; derived snapshots excluded from workspace persistence and batch refresh.
+- [ ] CI/auto merge v0.6.0 and production smoke test.
+- [ ] Persistent model definitions, multi-step DAG, automatic rebuild, relation diagram and primary-key management. No implicit type coercion, no arbitrary SQL, no chained derived sources yet. Delete stale tables to release memory.

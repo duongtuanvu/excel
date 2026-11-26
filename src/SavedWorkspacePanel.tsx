@@ -29,7 +29,7 @@ function Slot({slot,loaded,disabled,onAttach,onForget,onActivate}:{
   </li>;
 }
 export default function SavedWorkspacePanel({saved,sources,disabled,onSave,onAttach,onForget,onActivate}:Props){
-  const real=sources.filter(s=>!s.demo);
+  const real=sources.filter(s=>!s.demo&&!s.derived);
   const bySlot=new Map(real.map(s=>[s.slotId,s]));
   const slots=saved?.slots??[];
   const ready=slots.filter(s=>bySlot.has(s.id)).length;

@@ -1,9 +1,10 @@
 import type { Column, Source } from './model.ts';
 import type { SchemaRule } from './schema-model.ts';
 import type { ImportLayout, SheetBounds } from './import-model.ts';
+import type { ModelOrigin } from './data-model.ts';
 
 export const WORKSPACE_LIMITS = {sources:12, sheetsPerBook:32, bookBytes:50*1024*1024, bookCells:2_000_000, tableCells:2_000_000, tableChars:50_000_000, aliasLength:100} as const;
-export type ManagedSource = Source & {id:string; slotId:string; alias:string; bookId:string; revision:number; demo:boolean; originalColumns?:Column[]; schema?:SchemaRule[]; layout?:ImportLayout; bounds?:SheetBounds};
+export type ManagedSource = Source & {id:string; slotId:string; alias:string; bookId:string; revision:number; demo:boolean; originalColumns?:Column[]; schema?:SchemaRule[]; layout?:ImportLayout; bounds?:SheetBounds; derived?:ModelOrigin; stale?:boolean};
 export type Workspace = {active:ManagedSource|null; sources:ManagedSource[]};
 export type BookBudget = {bytes:number;cells:number;sheets:number};
 export type TableBudget = {rows:number;columns:Column[];chars:number};

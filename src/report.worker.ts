@@ -16,6 +16,8 @@ import { resolveLayout,validateLayout,layoutConfig,suggestMapping,mappedRules } 
 import type { SheetBounds,ImportLayout,ColumnMapping,LayoutPreview } from './import-model';
 import { validateBatchFiles,checkBatchPeak,batchStage,swapBatchTables } from './batch-model';
 import type { BatchFile,BatchPreview,BatchItemPreview } from './batch-model';
+import {compileModel,readModelStats,joinRows,checkModelSize,modelSizeSql,modelCount,modelStale,isUnion} from './data-model';
+import type {ModelInput,ModelPreview} from './data-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -25,18 +27,37 @@ const sources = new Map<string,Entry>();
 let activeId:string|null=null;
 let nextSource=0, nextBook=0;
 let engineUnsafe=false;
-const workspace=():Workspace=>({active:activeId?sources.get(activeId)?.source??null:null,sources:Array.from(sources.values(),e=>e.source)});
+function workspace():Workspace{
+ const all=Array.from(sources.values(),e=>e.source);
+ for(const item of sources.values()){
+   const d=item.source.derived;
+   if(d){const stale=modelStale(d,all);if(stale!==!!item.source.stale)item.source={...item.source,stale};}
+ }
+ if(activeId&&sources.get(activeId)?.source.stale)activeId=Array.from(sources.values()).find(e=>!e.source.derived)?.source.id??null;
+ return {active:activeId?sources.get(activeId)?.source??null:null,sources:Array.from(sources.values(),e=>e.source)};
+}
 function entry(id:string,revision?:number):Entry{
   const found=sources.get(id);
   if(!found)throw new Error('SOURCE_NOT_FOUND: Nguồn dữ liệu không tồn tại.');
   if(revision!==undefined&&revision!==found.source.revision)throw new Error('SOURCE_STALE: Nguồn dữ liệu đã thay đổi. Hãy chạy lại báo cáo.');
   return found;
 }
+function readable(id:string,revision:number):Entry{
+ const item=entry(id,revision);
+ if(item.source.derived&&modelStale(item.source.derived,Array.from(sources.values(),e=>e.source)))throw new Error('MODEL_STALE: Nguồn gốc đã thay đổi. Hãy tạo lại bảng ghép.');
+ return item;
+}
+function rawEntry(id:string,revision:number):Entry{
+ const item=entry(id,revision);
+ if(item.source.derived)throw new Error('MODEL_READ_ONLY: Không thể thay file hoặc sửa schema bảng ghép.');
+ return item;
+}
 function active():Entry{
   if(!activeId)throw new Error('SOURCE_NOT_FOUND: Chưa có nguồn dữ liệu.');
   return entry(activeId);
 }
 function bookFor(source:ManagedSource):Book{
+  if(source.derived)throw new Error('MODEL_READ_ONLY: Bảng ghép không có workbook gốc.');
   const book=books.get(source.bookId);
   if(!book)throw new Error('WORKBOOK_NOT_FOUND: Không tìm thấy workbook.');
   return book;
@@ -335,7 +356,7 @@ function planBatch(input:BatchFile[],buildCsv:boolean){
     results.push(result);
     try{
       const item=entry(f.sourceId,f.revision),source=item.source;
-      if(source.demo)throw new Error('BATCH_SOURCE_INVALID: Chỉ thay nguồn thật đang mở.');
+      if(source.demo||source.derived)throw new Error('BATCH_SOURCE_INVALID: Chỉ thay nguồn gốc đang mở.');
       const book=readBook(f.name,f.bytes);
       checkBatchPeak([...currentBooks.map(b=>b.budget),...candidates.map(c=>c.book.budget),book.budget],[...currentTables,...candidates.map(candidateBudget)]);
       const sheet=replacementSheet(source.sheet,book.data.SheetNames);
@@ -392,6 +413,46 @@ async function applyBatch(input:BatchFile[]):Promise<Workspace>{
     if(!engineUnsafe)for(const stage of stages)await conn.query('DROP TABLE IF EXISTS '+stage).catch(()=>{});
   }
 }
+async function inspectModel(input:ModelInput){
+ const left=rawEntry(input.leftId,input.leftRevision).source,right=rawEntry(input.rightId,input.rightRevision).source;
+ const compiled=compileModel(input,left,right,Array.from(sources.values(),e=>e.source.alias));
+ const {conn}=await connect();
+ let stats:ModelPreview['stats']=null,expected:number|null=null;
+ if(compiled.statsSql){
+   const row=(await conn.query(compiled.statsSql)).get(0);
+   if(!row)throw new Error('MODEL_STATS_INVALID: Không có thống kê khóa.');
+   stats=readModelStats(row as unknown as Record<string,unknown>,left.rows,right.rows);
+   expected=joinRows(input.operation,stats);
+   checkModelSize(expected,compiled.columns.length);
+ }else if(input.operation==='union-all'){
+   expected=left.rows+right.rows;checkModelSize(expected,compiled.columns.length);
+ }
+ // UNION DISTINCT may reduce the row count. Its input is bounded by the workspace caps.
+ const row=(await conn.query(modelSizeSql(compiled.sql,compiled.columns))).get(0);
+ const rows=modelCount(row?.n,left.rows*right.rows+left.rows+right.rows),chars=modelCount(row?.chars,Number.MAX_SAFE_INTEGER);
+ if(expected!==null&&rows!==expected)throw new Error('MODEL_STATS_INVALID: Số dòng kết quả không khớp dự kiến.');
+ checkModelSize(rows,compiled.columns.length);
+ checkWorkspaceBudget(Array.from(books.values(),b=>b.budget),[...Array.from(sources.values(),tableBudget),{rows,columns:compiled.columns,chars}]);
+ const preview:ModelPreview={rows,columns:compiled.columns,chars,stats,removedDuplicates:isUnion(input.operation)?left.rows+right.rows-rows:null};
+ return {compiled,preview,conn};
+}
+async function createModel(input:ModelInput&{confirmExpansion:boolean}):Promise<Workspace>{
+ const {compiled,preview,conn}=await inspectModel(input);
+ if(preview.stats?.expansion&&input.confirmExpansion!==true)throw new Error('MODEL_EXPANSION_CONFIRM: Xác nhận nguy cơ nhân bản dòng trước khi tạo bảng.');
+ const id='s'+(++nextSource),table=sourceTable(id);
+ const origin={operation:input.operation,leftId:input.leftId,leftRevision:input.leftRevision,rightId:input.rightId,rightRevision:input.rightRevision};
+ const managed:ManagedSource={id,slotId:crypto.randomUUID(),alias:compiled.alias,bookId:'',revision:1,demo:false,name:compiled.alias,sheet:'Data Model',sheets:[],rows:preview.rows,columns:preview.columns,derived:origin,stale:false};
+ try{
+   await conn.query('CREATE TABLE '+table+' AS '+compiled.sql);
+   const count=(await conn.query('SELECT COUNT(*) AS n FROM '+table)).get(0);
+   if(Number(count?.n)!==preview.rows)throw new Error('MODEL_ROW_MISMATCH: Số dòng không khớp preview.');
+ }catch(e){
+   await conn.query('DROP TABLE IF EXISTS '+table).catch(()=>{});
+   if(e instanceof Error&&e.message.startsWith('MODEL_'))throw e;
+   throw new Error('MODEL_CREATE_FAILED: Không thể tạo bảng ghép. Nguồn gốc không thay đổi.');
+ }
+ sources.set(id,{source:managed,chars:preview.chars});activeId=id;return workspace();
+}
 async function handle(req: Request):Promise<unknown>{
   if(engineUnsafe)throw new Error('ENGINE_RECOVERY_REQUIRED: Hãy tải lại trang vì không xác nhận được trạng thái transaction.');
   switch(req.type){
@@ -413,7 +474,9 @@ async function handle(req: Request):Promise<unknown>{
       return store(book,req.input.sheet);
     }
     case 'activateSource':{
-      activeId=entry(req.input.sourceId).source.id;return workspace();
+      const target=entry(req.input.sourceId).source;
+      if(target.derived&&modelStale(target.derived,Array.from(sources.values(),e=>e.source)))throw new Error('MODEL_STALE: Bảng ghép đã hết hiệu lực; hãy tạo lại.');
+      activeId=target.id;return workspace();
     }
     case 'renameSource':{
       const item=entry(req.input.sourceId);
@@ -436,20 +499,22 @@ async function handle(req: Request):Promise<unknown>{
       return store(book,replacementSheet(slot.sheet,book.data.SheetNames),undefined,only?.source.demo?only:undefined,slot);
     }
     case 'replaceSource':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
     }
+    case 'previewModel':return (await inspectModel(req.input)).preview;
+    case 'createModel':return createModel(req.input);
     case 'previewBatch':return planBatch(req.input.files,false).preview;
     case 'applyBatch':return applyBatch(req.input.files);
     case 'previewLayout':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
       const {prepared,mapped}=layoutCandidate(item,req.input.layout,req.input.config,false);
       return {sourceId:item.source.id,revision:item.source.revision,bounds:prepared.bounds,columns:prepared.next.columns,rows:prepared.next.rows,issues:prepared.issues,conflicts:mapped.conflicts,config:mapped.config} satisfies LayoutPreview;
     }
     case 'applyLayout':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
       const {book,prepared,mapped}=layoutCandidate(item,req.input.layout,req.input.config,true);
       if(mapped.conflicts.length&&req.input.resetReport!==true)throw new Error('LAYOUT_REPORT_CONFLICT: Cần xác nhận đặt lại báo cáo.');
@@ -457,38 +522,38 @@ async function handle(req: Request):Promise<unknown>{
       return {workspace:ws,config:mapped.config};
     }
     case 'inspectReplacement':{
-      const item=entry(req.input.sourceId,req.input.revision),book=readBook(req.input.name,req.input.bytes);
+      const item=rawEntry(req.input.sourceId,req.input.revision),book=readBook(req.input.name,req.input.bytes);
       const sheet=replacementSheet(item.source.sheet,book.data.SheetNames);
       const prepared=prepare(book.data,sheet,book.name,[],false,item.source.layout);
       return {sourceId:item.source.id,revision:item.source.revision,sheet,incoming:prepared.originalColumns,mapping:suggestMapping(item.source.columns,item.source.schema??[],prepared.originalColumns)};
     }
     case 'previewMapped':{
-      const item=entry(req.input.sourceId,req.input.revision),{prepared,mismatches}=mappedCandidate(item,req.input.name,req.input.bytes,req.input.mapping,false);
+      const item=rawEntry(req.input.sourceId,req.input.revision),{prepared,mismatches}=mappedCandidate(item,req.input.name,req.input.bytes,req.input.mapping,false);
       return {sourceId:item.source.id,revision:item.source.revision,rows:prepared.next.rows,columns:prepared.next.columns,issues:prepared.issues,mismatches};
     }
     case 'applyMapped':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
       const {book,sheet,prepared,mismatches}=mappedCandidate(item,req.input.name,req.input.bytes,req.input.mapping,true);
       if(mismatches.length)throw new Error('SOURCE_SCHEMA_MISMATCH: '+mismatches.join(', '));
       return store(book,sheet,item,undefined,undefined,prepared);
     }
     case 'previewSchema':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
       const {prepared,mapped}=schemaCandidate(item,req.input.rules,req.input.config,false);
       return {sourceId:item.source.id,revision:item.source.revision,columns:prepared.next.columns,issues:prepared.issues,rows:prepared.next.rows,config:mapped} satisfies SchemaPreview;
     }
     case 'applySchema':{
-      const item=entry(req.input.sourceId,req.input.revision);
+      const item=rawEntry(req.input.sourceId,req.input.revision);
       if(activeId!==item.source.id)throw new Error('SOURCE_STALE: Hãy chọn lại nguồn.');
       const {book,prepared,mapped}=schemaCandidate(item,req.input.rules,req.input.config,true);
       const ws=await store(book,item.source.sheet,item,undefined,undefined,prepared);
       return {workspace:ws,config:mapped};
     }
-    case 'profile':return getProfile(entry(req.input.sourceId,req.input.revision));
+    case 'profile':return getProfile(readable(req.input.sourceId,req.input.revision));
     case 'distribution':{
-      const item=entry(req.input.sourceId,req.input.revision),profile=await getProfile(item);
+      const item=readable(req.input.sourceId,req.input.revision),profile=await getProfile(item);
       const {conn}=await connect();
       try{return await profileDistribution(item.source,profile,req.input.columnId,async sql=>await conn.query(sql));}
       catch(error){
@@ -496,8 +561,8 @@ async function handle(req: Request):Promise<unknown>{
         throw new Error('PROFILE_DISTRIBUTION_FAILED: Không thể tính phân bố của cột này.');
       }
     }
-    case 'report':return makeReport(req.input.config,req.input.page,entry(req.input.sourceId,req.input.revision).source);
-    case 'export':return exportReport(req.input.config,req.input.format,entry(req.input.sourceId,req.input.revision).source);
+    case 'report':return makeReport(req.input.config,req.input.page,readable(req.input.sourceId,req.input.revision).source);
+    case 'export':return exportReport(req.input.config,req.input.format,readable(req.input.sourceId,req.input.revision).source);
   }
 }
 

@@ -58,7 +58,7 @@ export function validateWorkspace(input:unknown):SavedWorkspace|null{
   return {version:1,slots};
 }
 export function snapshotWorkspace(previous:SavedWorkspace|null, sources:readonly ManagedSource[], configFor:(source:ManagedSource)=>Config|undefined):SavedWorkspace{
-  const loaded=sources.filter(s=>!s.demo);
+  const loaded=sources.filter(s=>!s.demo&&!s.derived);
   if(!loaded.length)throw new Error('WORKSPACE_EMPTY: Hãy nhập ít nhất một nguồn thật.');
   const slots=loaded.map(source=>{
     const config=configFor(source);

@@ -6,7 +6,7 @@ import {LIMITS} from './model';
 type Props={sources:ManagedSource[];disabled:boolean;onRequest:(selection:BatchSelection[],apply?:boolean)=>Promise<BatchPreview|null>};
 const fmt=new Intl.NumberFormat('vi-VN');
 export default function BatchPanel({sources,disabled,onRequest}:Props){
- const real=sources.filter(s=>!s.demo);
+ const real=sources.filter(s=>!s.demo&&!s.derived);
  const [open,setOpen]=useState(false),[files,setFiles]=useState<Record<string,File>>({}),[preview,setPreview]=useState<BatchPreview|null>(null),[pending,setPending]=useState<'preview'|'apply'|null>(null),[error,setError]=useState('');
  const running=useRef(false),locked=disabled||pending!==null;
  const selected=real.filter(s=>files[s.id]).map(s=>({sourceId:s.id,revision:s.revision,file:files[s.id]}));

@@ -8,6 +8,8 @@ import ProfilePanel from './ProfilePanel';
 import SchemaPanel from './SchemaPanel';
 import ImportPanel from './ImportPanel';
 import BatchPanel from './BatchPanel';
+import ModelPanel from './ModelPanel';
+import type {ModelInput,ModelPreview} from './data-model';
 import type { BatchSelection, BatchPreview } from './batch-model';
 import { BATCH_LIMITS } from './batch-model';
 import type { ImportLayout, ColumnMapping } from './import-model';
@@ -189,6 +191,15 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     return runProfile(e=>e.request('distribution',{sourceId:target.id,revision:target.revision,columnId}));
   }
 
+  async function modelRequest(input:ModelInput,apply=false,confirmExpansion=false):Promise<ModelPreview|null>{
+    return runProfile(async e=>{
+      if(!apply)return e.request('previewModel',input);
+      const ws=await e.request('createModel',{...input,confirmExpansion});
+      applyWorkspace(ws,undefined,defaultConfig(ws.active?.columns??[]));
+      setNotice('Đã tạo bảng ghép '+input.alias+'.');
+      return null;
+    });
+  }
   async function batchRequest(selection:BatchSelection[],apply=false):Promise<BatchPreview|null>{
     if(selection.length<2||selection.length>BATCH_LIMITS.files)throw new Error('BATCH_COUNT_INVALID: Chọn ít nhất hai nguồn.');
     if(selection.some(s=>!s.file.size||s.file.size>LIMITS.fileBytes||! /\.(xlsx|xls|csv|tsv)$/i.test(s.file.name))||selection.reduce((n,s)=>n+s.file.size,0)>BATCH_LIMITS.bytes)throw new Error('BATCH_BYTES_LIMIT: File không hợp lệ hoặc vượt giới hạn 25 MiB/file, 50 MiB/đợt.');
@@ -279,7 +290,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     if (!/\.(xlsx|xls|csv|tsv)$/i.test(file.name) || file.size <= 0 || file.size > LIMITS.fileBytes) {
       setError('FILE_INVALID: Chọn file Excel, CSV hoặc TSV hợp lệ, tối đa 25 MiB.'); return;
     }
-    if (replace && !source) return;
+    if (replace && (!source || source.derived)) return;
     void sourceAction('Đang đọc ' + file.name + '…', async engine => {
       const bytes = await file.arrayBuffer();
       return replace && source
@@ -357,7 +368,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.5.5</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.6.0</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -456,9 +467,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <section className="report-card chart-card"><div className="card-heading"><div><h2>Phân tích theo nhóm</h2><p>{label} · {aggregateLabel} · tối đa 12 nhóm đầu</p></div><div className="segmented" aria-label="Kiểu biểu đồ"><button className={config.chart === 'horizontal' ? 'active' : ''} aria-pressed={config.chart === 'horizontal'} disabled={locked} onClick={() => patch({chart:'horizontal'})}>Thanh</button><button className={config.chart === 'bar' ? 'active' : ''} aria-pressed={config.chart === 'bar'} disabled={locked} onClick={() => patch({chart:'bar'})}>Cột</button></div></div>
           {result ? <Chart groups={groups} mode={config.chart}/> : <div className="empty">{loading || busy ? <><span className="spinner"/> Đang tính báo cáo…</> : 'Chưa có kết quả.'}</div>}
         </section>
+        <ModelPanel key={sources.filter(s=>!s.demo&&!s.derived).map(s=>s.id+':'+s.revision+':'+s.alias).join('|')} sources={sources} disabled={locked} onRequest={modelRequest}/>
         <BatchPanel key={sources.map(s=>s.id+':'+s.revision+':'+s.alias).join('|')} sources={sources} disabled={locked} onRequest={batchRequest}/>
-        {source&&<ImportPanel key={'import:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewLayout} onApply={applyLayout} onReplacement={replacementRequest}/>}
-        {source&&<SchemaPanel key={'schema:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewSchema} onApply={applySchema}/>}
+        {source&&!source.derived&&<ImportPanel key={'import:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewLayout} onApply={applyLayout} onReplacement={replacementRequest}/>}
+        {source&&!source.derived&&<SchemaPanel key={'schema:'+source.id+':'+source.revision} source={source} config={config} disabled={locked} onPreview={previewSchema} onApply={applySchema}/>}
         {source&&<ProfilePanel key={source.id+':'+source.revision} source={source} disabled={locked} onProfile={loadProfile} onDistribution={loadDistribution}/>}
         <section className="report-card table-card"><div className="card-heading"><div><h2>Chi tiết dữ liệu</h2><p>Kiểm tra kết quả và dữ liệu nguồn đã lọc</p></div><span className="table-tag"><Icon name="grid" size={15}/> {source ? columns.length : 0} cột</span></div>
           <div className="tabs" role="tablist" aria-label="Bảng dữ liệu"><button role="tab" aria-selected={tab === 'summary'} className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>Bảng tổng hợp</button><button role="tab" aria-selected={tab === 'raw'} className={tab === 'raw' ? 'active' : ''} onClick={() => setTab('raw')}>Dữ liệu nguồn</button></div>
