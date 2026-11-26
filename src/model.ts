@@ -1,3 +1,6 @@
+import {validatePivot,validatePivotColumns,pivotReferences} from './pivot-config.ts';
+import type {PivotConfig,PivotResult} from './pivot-config.ts';
+
 export const LIMITS = {
   fileBytes: 25 * 1024 * 1024,
   rows: 100_000,
@@ -19,9 +22,9 @@ export type Aggregate = typeof AGGREGATIONS[number];
 export const OPERATORS = ['contains', 'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'empty', 'notEmpty'] as const;
 export type Operator = typeof OPERATORS[number];
 export type Filter = { column: string; operator: Operator; value: string };
-export type Config = { title: string; groups: string[]; metric: string; aggregate: Aggregate; filters: Filter[]; chart: 'bar' | 'horizontal'; sort: 'desc' | 'asc' };
+export type Config = { title: string; groups: string[]; metric: string; aggregate: Aggregate; filters: Filter[]; chart: 'bar' | 'horizontal'; sort: 'desc' | 'asc'; pivot?:PivotConfig };
 export type Group = { labels: (string | null)[]; value: number | null; count: number };
-export type Report = { total: number | null; filtered: number; groups: Group[]; truncated: boolean; preview: Cell[][]; page: number };
+export type Report = { total: number | null; filtered: number; groups: Group[]; truncated: boolean; preview: Cell[][]; page: number; pivot?:PivotResult; pivotError?:string };
 export type Template = { version: 1; config: Config };
 
 export function normalizeHeaders(values: unknown[]): string[] {
@@ -56,7 +59,8 @@ export function validateTemplate(input: unknown): Template {
     if (!name(f.column) || !f.column || !OPERATORS.includes(f.operator as Operator) || typeof f.value !== 'string' || f.value.length > 1000) throw new Error('Bộ lọc không hợp lệ.');
     return { column: f.column, operator: f.operator as Operator, value: f.value };
   });
-  return { version: 1, config: { title: c.title, metric: c.metric, groups: [...c.groups], aggregate: c.aggregate as Aggregate, chart: c.chart, sort: c.sort, filters } };
+  const pivot=validatePivot(c.pivot);
+  return { version: 1, config: { title: c.title, metric: c.metric, groups: [...c.groups], aggregate: c.aggregate as Aggregate, chart: c.chart, sort: c.sort, filters, ...(pivot?{pivot}:{}) } };
 }
 
 export function reconcileConfig(config: Config, columns: Column[]): { config: Config; missing: string[] } {
@@ -72,7 +76,11 @@ export function reconcileConfig(config: Config, columns: Column[]): { config: Co
     aggregate = 'count';
   }
   if (!metric && aggregate === 'distinct') aggregate = 'count';
-  return { config: { ...config, groups, filters, metric, aggregate }, missing };
+  let pivot=config.pivot;
+  if(pivot){try{validatePivotColumns(pivot,columns);}catch{missing.push('Pivot ('+pivotReferences(pivot).join(', ')+')');pivot=undefined;}}
+  const next={...config,groups,filters,metric,aggregate};
+  if(pivot)next.pivot=pivot;else delete next.pivot;
+  return {config:next,missing};
 }
 
 export function sqlText(value: string): string {
@@ -83,6 +91,7 @@ export function sqlText(value: string): string {
 export function compileReport(config: Config, columns: Column[], table = 'report_data') {
   if (table !== 'report_data' && !/^source_s[1-9][0-9]{0,14}$/.test(table)) throw new Error('SOURCE_ID_INVALID: Tên bảng không hợp lệ.');
   const checked = validateTemplate({ version: 1, config }).config;
+  if(checked.pivot)validatePivotColumns(checked.pivot,columns);
   const column = (name: string) => {
     const c = columns.find(item => item.name === name);
     if (!c || !/^c[0-9]+$/.test(c.id)) throw new Error('Không tìm thấy cột: ' + name);
@@ -113,6 +122,7 @@ export function compileReport(config: Config, columns: Column[], table = 'report
   const grouping = groups.length ? ' GROUP BY ' + groups.join(', ') : '';
   const projection = groups.map((g, i) => g + ' AS g' + i).concat([aggregate + ' AS value', 'COUNT(*) AS n']).join(', ');
   return {
+    from:source,
     totals: 'SELECT ' + aggregate + ' AS value, COUNT(*) AS n' + source,
     groups: 'SELECT ' + projection + source + grouping + ' ORDER BY value ' + checked.sort.toUpperCase() + ' NULLS LAST' + (groups.length ? ', ' + groups.map((_,i) => 'g' + i + ' ASC NULLS LAST').join(', ') : '') + ' LIMIT ' + (LIMITS.groups + 1),
     preview: (page: number) => 'SELECT *' + source + ' ORDER BY rowid LIMIT ' + LIMITS.page + ' OFFSET ' + Math.max(0, Math.trunc(page)) * LIMITS.page,

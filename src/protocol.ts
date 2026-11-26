@@ -8,6 +8,7 @@ import type { ImportLayout, LayoutPreview, ColumnMapping, ReplacementPreview, Ma
 import type { BatchFile, BatchPreview } from './batch-model';
 import type { ModelInput,ModelPreview } from './data-model';
 import type { PipelineInput,PipelinePreview } from './pipeline-model';
+import type {PivotResult} from './pivot-config';
 type SourceVersion={sourceId:string;revision:number};
 export type Requests={
   demo:{input:null;output:Workspace};
@@ -34,6 +35,7 @@ export type Requests={
   applySchema:{input:SourceVersion&{rules:SchemaRule[];config:Config};output:{workspace:Workspace;config:Config}};
   profile:{input:SourceVersion;output:SourceProfile};
   distribution:{input:SourceVersion&{columnId:string};output:Distribution};
+  previewPivot:{input:SourceVersion&{config:Config};output:PivotResult};
   report:{input:SourceVersion&{config:Config;page:number};output:Report};
   export:{input:SourceVersion&{config:Config;format:'xlsx'|'csv'};output:{bytes:ArrayBuffer;name:string;mime:string}};
 };

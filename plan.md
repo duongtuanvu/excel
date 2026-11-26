@@ -450,3 +450,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [ ] CI, release and production smoke test. Not yet a multi-branch DAG. No sort/split/merge/group/unpivot, automatic rebuild or persistent JOIN recipe. Reapply saved recipes manually to compatible source; outputs remain session-only.
 
 - [x] Add four pipeline compiler/dependency unit tests, account isolation/upgrade integration test and two Chromium E2E scenarios (strict cast failure, ordering, preview, undo/redo, persistence and stale result). Release gate pending.
+
+### Advanced Pivot v0.7.0
+- [x] Source Pivot with up to 3 row fields, 2 column fields, 6 measures; independent exact SQL aggregation at every subtotal/grand total, bounded axis cardinality and output, paginated matrix.
+- [x] Source numeric row-level binary expressions and aggregate-measure arithmetic, ordered dependency validation, NULL on division by zero/nonfinite, formats number/VND/percent. No raw SQL/eval.
+- [x] Source persistence in versioned Config, workspace/template/period compatibility, schema rename remapping and old-client write protection, full matrix CSV/XLSX export.
+- [ ] CI + release and production smoke test. Remaining: drag/drop, expand/collapse, top-N, % of totals, drill-down, richer expressions/DAX, time intelligence, DECIMAL accuracy; no claim of full Phase 05 acceptance.

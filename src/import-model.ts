@@ -1,3 +1,4 @@
+import {pivotReferences} from './pivot-config.ts';
 import { LIMITS, compileReport, defaultConfig, reconcileConfig } from './model.ts';
 import type { Column, Config } from './model.ts';
 import { validateSchema, resolveSchema } from './schema-model.ts';
@@ -31,7 +32,7 @@ export function resolveLayout(bounds:SheetBounds,readBounds:SheetBounds,input:un
 export function layoutConfig(config:Config,before:Column[],after:Column[]):{config:Config;conflicts:string[]}{
  const mapped=reconcileConfig(config,after);
  const conflicts=[...mapped.missing];
- const names=new Set([...config.groups,...config.filters.map(f=>f.column),...(config.metric?[config.metric]:[])]);
+ const names=new Set([...config.groups,...config.filters.map(f=>f.column),...(config.metric?[config.metric]:[]),...(config.pivot?pivotReferences(config.pivot):[])]);
  for(const name of names){
    const prev=before.find(c=>c.name===name),next=after.find(c=>c.name===name);
    if(prev&&next&&prev.kind!==next.kind)conflicts.push(name+' (đổi kiểu)');

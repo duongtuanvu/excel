@@ -5,6 +5,8 @@ import UserCenter from './UserCenter';
 import SourceManager from './SourceManager';
 import SavedWorkspacePanel from './SavedWorkspacePanel';
 import ProfilePanel from './ProfilePanel';
+import PivotPanel from './PivotPanel';
+import type {PivotConfig,PivotResult} from './pivot-config';
 import SchemaPanel from './SchemaPanel';
 import ImportPanel from './ImportPanel';
 import BatchPanel from './BatchPanel';
@@ -187,6 +189,10 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     busyRef.current=true;setProfiling(true);
     try{return await operation(client.current);}
     finally{busyRef.current=false;setProfiling(false);}
+  }
+  function previewPivot(pivot:PivotConfig):Promise<PivotResult>{
+    if(!source)throw Error('PIVOT_SOURCE_INVALID: Chưa có nguồn.');
+    return runProfile(e=>e.request('previewPivot',{sourceId:source.id,revision:source.revision,config:{...config,pivot}}));
   }
   function loadProfile(target:ManagedSource):Promise<SourceProfile>{
     return runProfile(e=>e.request('profile',{sourceId:target.id,revision:target.revision}));
@@ -377,7 +383,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     finally { busyRef.current = false; setBusy(''); }
   }
   async function exportData(format: 'xlsx' | 'csv') {
-    if (!client.current || !source || !result || busyRef.current || result.truncated) return;
+    if (!client.current || !source || !result || busyRef.current || result.truncated || result.pivotError) return;
     busyRef.current = true; setBusy('Đang tạo file ' + format.toUpperCase() + '…'); setError('');
     try {
       const exported = await client.current.request('export', { config, format, sourceId: source.id, revision: source.revision });
@@ -406,7 +412,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.6.1</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.7.0</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -490,7 +496,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       </aside>}
       <main className="main">
         <div className="breadcrumb"><span>Workspace</span><Icon name="chevron" size={14}/><span>Excel reports</span><span className="spacer"/><span className="engine-status"><span className={'dot ' + (!source ? 'inactive' : '')}/>{source ? 'DuckDB · Ready' : 'DuckDB · Đang khởi tạo'}</span></div>
-        <div className="hero"><div><div className="eyebrow">DYNAMIC REPORT / 01</div><h1>{config.title || 'Báo cáo tổng hợp'}</h1><p>{source ? source.alias + '  ·  ' + source.sheet : 'Import file để bắt đầu phân tích dữ liệu'}</p></div><div className="export-buttons"><button className="button" disabled={locked || !result || result.truncated} onClick={() => void exportData('csv')}><Icon name="download"/> CSV</button><button className="button primary" disabled={locked || !result || result.truncated} onClick={() => void exportData('xlsx')}><Icon name="download"/> Xuất Excel</button></div></div>
+        <div className="hero"><div><div className="eyebrow">DYNAMIC REPORT / 01</div><h1>{config.title || 'Báo cáo tổng hợp'}</h1><p>{source ? source.alias + '  ·  ' + source.sheet : 'Import file để bắt đầu phân tích dữ liệu'}</p></div><div className="export-buttons"><button className="button" disabled={locked || !result || result.truncated || !!result.pivotError} onClick={() => void exportData('csv')}><Icon name="download"/> CSV</button><button className="button primary" disabled={locked || !result || result.truncated || !!result.pivotError} onClick={() => void exportData('xlsx')}><Icon name="download"/> Xuất Excel</button></div></div>
         {busy && <div className="notice working" role="status"><span className="spinner"/>{busy}</div>}
         {error && <div className="notice error" role="alert">{error}<button className="button icon-button" aria-label="Đóng thông báo lỗi" onClick={() => setError('')}><Icon name="close" size={15}/></button></div>}
         {notice && <div className="notice" role="status">{notice}<button className="button icon-button" aria-label="Đóng thông báo" onClick={() => setNotice('')}><Icon name="close" size={15}/></button></div>}
@@ -505,6 +511,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <section className="report-card chart-card"><div className="card-heading"><div><h2>Phân tích theo nhóm</h2><p>{label} · {aggregateLabel} · tối đa 12 nhóm đầu</p></div><div className="segmented" aria-label="Kiểu biểu đồ"><button className={config.chart === 'horizontal' ? 'active' : ''} aria-pressed={config.chart === 'horizontal'} disabled={locked} onClick={() => patch({chart:'horizontal'})}>Thanh</button><button className={config.chart === 'bar' ? 'active' : ''} aria-pressed={config.chart === 'bar'} disabled={locked} onClick={() => patch({chart:'bar'})}>Cột</button></div></div>
           {result ? <Chart groups={groups} mode={config.chart}/> : <div className="empty">{loading || busy ? <><span className="spinner"/> Đang tính báo cáo…</> : 'Chưa có kết quả.'}</div>}
         </section>
+        {source&&<PivotPanel key={'pivot:'+source.id+':'+source.revision+':'+JSON.stringify(config.pivot??null)} config={config} columns={columns} result={result?.pivot} queryError={result?.pivotError??queryError} disabled={locked} onPreview={previewPivot} onApply={pivot=>patch({pivot})}/>}
         <PipelinePanel key={'pipeline:'+JSON.stringify(sources.filter(s=>!s.demo&&!s.stale&&s.derived?.operation!=='pipeline').map(s=>[s.id,s.revision,s.alias]))} sources={sources} activeId={source?.id??null} recipes={session.settings.pipelines??[]} disabled={locked} onRequest={pipelineRequest} onSave={savePipelineRecipes}/>
         <ModelPanel key={'model:'+JSON.stringify(sources.filter(s=>!s.demo&&!s.stale).map(s=>[s.id,s.revision,s.alias]))} sources={sources} disabled={locked} onRequest={modelRequest}/>
         <BatchPanel key={'batch:'+JSON.stringify(sources.map(s=>[s.id,s.revision,s.alias]))} sources={sources} disabled={locked} onRequest={batchRequest}/>

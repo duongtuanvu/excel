@@ -1,3 +1,4 @@
+import {renamePivot} from './pivot-config.ts';
 import { LIMITS, compileReport } from './model.ts';
 import type { Cell, Column, Config, Kind } from './model.ts';
 
@@ -87,7 +88,7 @@ export function remapSchemaConfig(config:Config,before:readonly Column[],after:C
     if(['gt','gte','lt','lte'].includes(f.operator)&&byName.get(f.column)?.kind==='number'&&next.kind!=='number')throw new Error('SCHEMA_REPORT_CONFLICT: Hãy sửa bộ lọc số trên cột '+f.column+' trước.');
     return {...f,column:next.name};
   });
-  const result={...config,metric:metric?.name??'',groups:config.groups.map(g=>lookup(g).name),filters};
+  const result={...config,metric:metric?.name??'',groups:config.groups.map(g=>lookup(g).name),filters,...(config.pivot?{pivot:renamePivot(config.pivot,n=>lookup(n).name)}:{})};
   try{compileReport(result,after);}catch{throw new Error('SCHEMA_REPORT_CONFLICT: Cấu hình báo cáo không hợp lệ sau chỉnh sửa.');}
   return result;
 }

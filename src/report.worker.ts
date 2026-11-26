@@ -1,4 +1,6 @@
 import * as XLSX from 'xlsx';
+import {calculatePivot} from './pivot-engine';
+import {pivotMatrix} from './pivot-config';
 import * as duckdb from '@duckdb/duckdb-wasm';
 import { mvpWasm, ehWasm, mvpWorker, ehWorker } from 'duckdb-assets';
 import { LIMITS, normalizeHeaders, compileReport, safeCsvCell } from './model';
@@ -273,19 +275,24 @@ async function makeReport(config: Config, page: number, source:ManagedSource): P
   }
   const previewResult = await connection.query(query.preview(safePage));
   const preview = Array.from(previewResult, row => source!.columns.map(c => convert(row?.[c.id], c.kind)));
-  return { total: numberOrNull(total?.value), filtered, groups, truncated: grouped.numRows > LIMITS.groups, preview, page: safePage };
+  let pivotResult:Report['pivot'],pivotError:string|undefined;
+  if(config.pivot){try{pivotResult=await calculatePivot(config,source.columns,sourceTable(source.id),sql=>connection!.query(sql));}
+  catch(e){pivotError=e instanceof Error&&e.message.startsWith('PIVOT_')?e.message:'PIVOT_QUERY_FAILED: Không thể tính ma trận.';}}
+  return { total: numberOrNull(total?.value), filtered, groups, truncated: grouped.numRows > LIMITS.groups, preview, page: safePage, ...(pivotResult?{pivot:pivotResult}:{}),...(pivotError?{pivotError}:{}) };
 }
 
 async function exportReport(config: Config, format: 'xlsx' | 'csv', source:ManagedSource) {
   if (!connection) throw new Error('ENGINE_NOT_READY: Chưa có nguồn dữ liệu.');
   const report = await makeReport(config, 0, source);
   if (report.truncated) throw new Error('Báo cáo có quá 5.000 nhóm. Hãy thêm bộ lọc trước khi xuất.');
+  if(report.pivotError)throw Error(report.pivotError);
+  const matrix=config.pivot&&report.pivot?pivotMatrix(config.pivot,report.pivot):null;
   const label = config.aggregate === 'count' ? 'Số dòng' : config.aggregate.toUpperCase() + ' ' + config.metric;
   const head = [...config.groups, label, 'Số bản ghi'];
   const summary: Cell[][] = [head, ...report.groups.map(g => [...g.labels, g.value, g.count])];
   const name = 'kysheet-' + new Date().toISOString().slice(0,10);
   if (format === 'csv') {
-    const buffer = new TextEncoder().encode('\uFEFF' + summary.map(row => row.map(safeCsvCell).join(',')).join('\r\n'));
+    const buffer = new TextEncoder().encode('\uFEFF' + (matrix??summary).map(row => row.map(safeCsvCell).join(',')).join('\r\n'));
     return { bytes: buffer.buffer as ArrayBuffer, name: name + '.csv', mime: 'text/csv;charset=utf-8' };
   }
   const raw = await connection.query(compileReport(config, source.columns, sourceTable(source.id)).raw);
@@ -299,6 +306,14 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv', source:Manag
   XLSX.utils.book_append_sheet(book, kpi, 'Tổng quan');
   XLSX.utils.book_append_sheet(book, summarySheet, 'Tổng hợp');
   XLSX.utils.book_append_sheet(book, rawSheet, 'Dữ liệu đã lọc');
+  if(matrix&&config.pivot){
+    const sheet=XLSX.utils.aoa_to_sheet(matrix),offset=1+config.pivot.rows.length;
+    for(let i=1;i<matrix.length;i++)for(let j=offset;j<matrix[i].length;j++){
+      const cell=sheet[XLSX.utils.encode_cell({r:i,c:j})];
+      if(cell?.t==='n'){const m=config.pivot.measures[(j-offset)%config.pivot.measures.length];cell.z='#,##0'+(m.decimals?'.'+'0'.repeat(m.decimals):'')+(m.format==='percent'?'%':m.format==='vnd'?' "₫"':'');}
+    }
+    XLSX.utils.book_append_sheet(book,sheet,'Pivot');
+  }
   const bytes = XLSX.write(book, { type: 'array', bookType: 'xlsx', compression: true }) as ArrayBuffer;
   return { bytes, name: name + '.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 }
@@ -544,12 +559,13 @@ async function runPeriod(input:Extract<Request,{type:'runPeriod'}>['input']):Pro
       built.set(model.id,source);
     }
     step=plan.output.alias;
-    await makeReport(plan.output.config,0,built.get(plan.output.id)!);
+    const checkedReport=await makeReport(plan.output.config,0,built.get(plan.output.id)!);
+    if(checkedReport.pivotError)throw Error(checkedReport.pivotError);
     await conn.query('COMMIT');
   }catch(error){
     if(engineUnsafe)throw error;
     await rollbackPeriod(conn);
-    const detail=error instanceof Error&&/^(SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|MODEL|WORKSPACE|PIPELINE|PERIOD|BATCH)_/.test(error.message)
+    const detail=error instanceof Error&&/^(SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|MODEL|WORKSPACE|PIPELINE|PERIOD|BATCH|PIVOT)_/.test(error.message)
       ?error.message:'Không thể đọc bảng hoặc tính báo cáo. Hãy kiểm tra file đã chọn.';
     throw new Error(step+' — '+detail);
   }
@@ -745,6 +761,11 @@ async function handle(req: Request):Promise<unknown>{
         if(error instanceof Error && /^PROFILE_[A-Z_]+:/.test(error.message))throw error;
         throw new Error('PROFILE_DISTRIBUTION_FAILED: Không thể tính phân bố của cột này.');
       }
+    }
+    case 'previewPivot':{
+      const source=readable(req.input.sourceId,req.input.revision).source,{conn}=await connect();
+      try{return await calculatePivot(req.input.config,source.columns,sourceTable(source.id),sql=>conn.query(sql));}
+      catch(e){if(e instanceof Error&&e.message.startsWith('PIVOT_'))throw e;throw Error('PIVOT_QUERY_FAILED: Không thể tính ma trận.');}
     }
     case 'report':return makeReport(req.input.config,req.input.page,readable(req.input.sourceId,req.input.revision).source);
     case 'export':return exportReport(req.input.config,req.input.format,readable(req.input.sourceId,req.input.revision).source);
