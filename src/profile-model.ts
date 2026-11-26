@@ -42,35 +42,37 @@ export function compileProfile(sourceId:string,columns:readonly Column[]){
   const batches:{columns:Column[];sql:string}[]=[];
   for(let offset=0;offset<columns.length;offset+=PROFILE_LIMITS.batchColumns){
     const batch=columns.slice(offset,offset+PROFILE_LIMITS.batchColumns);
-    const expressions=['COUNT(*) AS n'];
+    const expressions=['CAST(COUNT(*) AS INTEGER) AS n'];
     batch.forEach((c,i)=>{
       const v=nonEmpty(c.id),alias='p'+i+'_';
-      expressions.push('COUNT(*) - COUNT('+v+') AS '+alias+'missing','COUNT(DISTINCT '+v+') AS '+alias+'distinct');
+      expressions.push('CAST(COUNT(*) - COUNT('+v+') AS INTEGER) AS '+alias+'missing','CAST(COUNT(DISTINCT '+v+') AS INTEGER) AS '+alias+'distinct');
       if(c.kind==='number'){
         const cast='TRY_CAST('+v+' AS DOUBLE)';
         const num='(CASE WHEN isfinite('+cast+') THEN '+cast+' ELSE NULL END)';
-        expressions.push('COUNT('+v+') - COUNT('+num+') AS '+alias+'invalid',
+        expressions.push('CAST(COUNT('+v+') - COUNT('+num+') AS INTEGER) AS '+alias+'invalid',
           'MIN('+num+') AS '+alias+'min','MAX('+num+') AS '+alias+'max',
           'SUM('+num+') AS '+alias+'sum','AVG('+num+') AS '+alias+'average');
       }else if(c.kind==='date'){
         const valid='(CASE WHEN TRY_CAST('+v+' AS TIMESTAMP) IS NOT NULL THEN '+v+' ELSE NULL END)';
-        expressions.push('COUNT('+v+') - COUNT('+valid+') AS '+alias+'invalid','MIN('+valid+') AS '+alias+'min','MAX('+valid+') AS '+alias+'max');
+        expressions.push('CAST(COUNT('+v+') - COUNT('+valid+') AS INTEGER) AS '+alias+'invalid','MIN('+valid+') AS '+alias+'min','MAX('+valid+') AS '+alias+'max');
       }else if(c.kind==='boolean'){
-        expressions.push("COUNT(*) FILTER (WHERE "+v+" IS NOT NULL AND "+v+" NOT IN ('true','false')) AS "+alias+'invalid');
+        expressions.push("CAST(COUNT(*) FILTER (WHERE "+v+" IS NOT NULL AND "+v+" NOT IN ('true','false')) AS INTEGER) AS "+alias+'invalid');
       }
     });
     batches.push({columns:batch,sql:'SELECT '+expressions.join(', ')+' FROM '+table});
   }
   // Exact duplicate groups, based on all stored columns, with SQL NULLs grouped together.
   const grouped=columns.map(c=>columnId(c.id)).join(', ');
-  const duplicates='SELECT COUNT(*) AS duplicate_groups, COALESCE(SUM(n),0) AS duplicate_rows, COALESCE(SUM(n-1),0) AS duplicate_extra FROM (SELECT COUNT(*) AS n FROM '+table+' GROUP BY '+grouped+' HAVING COUNT(*)>1) AS d';
+  // DuckDB SUM(BIGINT) promotes to HUGEINT, which can cross Arrow/WASM as a decimal object.
+  // All three counts are <= LIMITS.rows, so INTEGER is exact and safe for the JS boundary.
+  const duplicates='SELECT CAST(COUNT(*) AS INTEGER) AS duplicate_groups, CAST(COALESCE(SUM(n),0) AS INTEGER) AS duplicate_rows, CAST(COALESCE(SUM(n-1),0) AS INTEGER) AS duplicate_extra FROM (SELECT COUNT(*) AS n FROM '+table+' GROUP BY '+grouped+' HAVING COUNT(*)>1) AS d';
   return {batches,duplicates};
 }
 export function compileDistribution(sourceId:string,columns:readonly Column[],id:string){
   checkedColumns(columns);
   if(!columns.some(c=>c.id===id))throw new Error('PROFILE_COLUMN_NOT_FOUND: Không tìm thấy cột.');
   const table=sourceTable(sourceId),v=nonEmpty(id);
-  return 'WITH counts AS (SELECT '+v+' AS v, COUNT(*) AS n FROM '+table+' WHERE '+v+' IS NOT NULL GROUP BY 1) SELECT left(v,'+PROFILE_LIMITS.labelLength+') AS label, length(v)>'+PROFILE_LIMITS.labelLength+' AS clipped, n FROM counts ORDER BY n DESC, v ASC LIMIT '+PROFILE_LIMITS.topValues;
+  return 'WITH counts AS (SELECT '+v+' AS v, CAST(COUNT(*) AS INTEGER) AS n FROM '+table+' WHERE '+v+' IS NOT NULL GROUP BY 1) SELECT left(v,'+PROFILE_LIMITS.labelLength+') AS label, length(v)>'+PROFILE_LIMITS.labelLength+' AS clipped, n FROM counts ORDER BY n DESC, v ASC LIMIT '+PROFILE_LIMITS.topValues;
 }
 export function profileCount(value:unknown,max:number):number{
   if((typeof value!=='number'&&typeof value!=='bigint'&&typeof value!=='string')||value==='')throw new Error('PROFILE_RESULT_INVALID: Thiếu số liệu thống kê.');

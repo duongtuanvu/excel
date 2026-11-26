@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -19,6 +21,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -26,3 +30,51 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Upload failed synthetic test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+  release:
+    name: Release tested module to main
+    needs: [unit, build]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feature/') && contains(github.event.head_commit.message, 'Release-KySheet: approved') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: kysheet-main-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Fast-forward main to exactly the tested commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git log -1 --format=%B | grep -Fxq 'Release-KySheet: approved' || { echo 'RELEASE_NOT_APPROVED'; exit 1; }
+          branch_head="$(git ls-remote --heads origin "$GITHUB_REF" | cut -f1)"
+          if [ "$branch_head" != "$GITHUB_SHA" ]; then
+            echo 'RELEASE_STALE: feature branch advanced or disappeared; refusing release'
+            exit 1
+          fi
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          if ! git merge-base --is-ancestor "$main_sha" "$GITHUB_SHA"; then
+            echo 'RELEASE_DIVERGED: main must be an ancestor of the tested commit'
+            exit 1
+          fi
+          git push origin "$GITHUB_SHA:refs/heads/main"
+          remote_main="$(git ls-remote --heads origin refs/heads/main | cut -f1)"
+          if [ "$remote_main" != "$GITHUB_SHA" ]; then
+            echo 'RELEASE_VERIFY_FAILED: main is not the tested SHA'
+            exit 1
+          fi
+          echo "RELEASE_OK: main=$remote_main"

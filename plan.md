@@ -394,3 +394,11 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source unit và E2E kiểm tra SQL ID, aggregate, empty, duplicate, filter independence, distribution, replace invalidation và mobile.
 - [ ] CI pass và merge main v0.5.2; smoke test Cloudflare production.
 - Chưa có schema editor, histogram bin, lỗi parse trước chuẩn hóa, benchmark trên mobile yếu. Không thay OAuth/D1.
+
+### CI-gated release automation
+
+- Chủ dự án yêu cầu mỗi module phải được nghiệm thu CI và merge main ngay khi đạt, không dừng ở push.
+- [x] CI 45765148497: 28/28 unit/integration và build pass; 9/11 E2E pass; cả hai profiling E2E không hiển thị kết quả. Không bỏ qua test.
+- [x] Sửa SQL aggregate count về INTEGER (giới hạn 100.000 dòng), tránh SUM(BIGINT) trả HUGEINT/Arrow decimal; thêm assertion SQL và fail-fast lỗi runtime trong E2E. Đây là nguyên nhân nghi ngờ từ source, cần kiểm chứng bằng CI.
+- [x] Source release job opt-in trailer `Release-KySheet: approved`, needs unit/build, contents:write chỉ ở job release, kiểm tra SHA/ancestor, non-force fast-forward và verify remote main. Upload diagnostics khi CI lỗi.
+- [ ] CI và release job v0.5.2 pass, xác minh HEAD main, Cloudflare deploy/smoke test. Không tick cho đến khi có bằng chứng.

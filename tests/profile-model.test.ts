@@ -13,6 +13,9 @@ test('profile SQL uses only validated identifiers and bounded aggregate batches'
   assert.equal(sql.batches.length,Math.ceil(100/PROFILE_LIMITS.batchColumns));
   assert.ok(sql.batches.every(b=>b.columns.length<=PROFILE_LIMITS.batchColumns&&b.sql.endsWith(' FROM source_s2')&&!b.sql.includes('DROP TABLE')));
   assert.match(sql.duplicates,/GROUP BY "c0", "c1"/);
+  assert.match(sql.duplicates,/CAST\(COALESCE\(SUM\(n\),0\) AS INTEGER\) AS duplicate_rows/);
+  assert.match(sql.duplicates,/CAST\(COALESCE\(SUM\(n-1\),0\) AS INTEGER\) AS duplicate_extra/);
+  assert.ok(sql.batches.every(b=>b.sql.includes('CAST(COUNT(*) AS INTEGER) AS n')));
   assert.throws(()=>compileProfile('s1;DROP TABLE x',columns));
   assert.throws(()=>compileProfile('s1',[{...columns[0],id:'c0"'}]));
   assert.throws(()=>compileProfile('s1',[columns[0],columns[0]]));
