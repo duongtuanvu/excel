@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { UiIcon } from './UiIcons';
+import { ErrorMessage } from './ErrorText';
 import { LIMITS } from './model';
 import { WORKSPACE_LIMITS } from './source-model';
 import { periodPlan } from './workspace-model';
@@ -50,7 +52,7 @@ export default function PeriodPanel({saved,disabled,onRun,outputIds}:{saved:Save
   }
   return <section className="period-panel" aria-label={dashboard?"Dashboard kỳ mới":"Báo cáo kỳ mới"}>
     <button type="button" className="button primary" disabled={locked} aria-expanded={open}
-      onClick={()=>{setOpen(!open);setFiles({});clearReview();setSuccess(false);}}>{open?'Đóng kỳ mới':dashboard?'Chạy kỳ mới Dashboard':'Chạy kỳ mới'}</button>
+      onClick={()=>{setOpen(!open);setFiles({});clearReview();setSuccess(false);}}><UiIcon name={open?'close':'play'} size={14}/>{open?'Đóng kỳ mới':dashboard?'Chạy kỳ mới Dashboard':'Chạy kỳ mới'}</button>
     {dashboard&&success&&<p role="status" className="profile-note">Đã chạy kỳ mới Dashboard.</p>}
     {open&&<div className="period-fields">
       {!dashboard&&<label className="field"><span>Báo cáo cần chạy</span>
@@ -65,10 +67,10 @@ export default function PeriodPanel({saved,disabled,onRun,outputIds}:{saved:Save
         <input type="file" aria-label={'File kỳ mới cho '+slot.alias} accept=".xlsx,.xls,.csv,.tsv" disabled={locked}
           onChange={e=>choose(slot.id,e.target.files?.[0])}/>
       </label>)}
-      {warning&&<p role="alert" className="model-warning">Bước {warning.alias} có khóa ghép trùng. Dự kiến {warning.rows.toLocaleString('vi-VN')} dòng kết quả, {warning.matchedPairs.toLocaleString('vi-VN')} cặp khớp. Tổng báo cáo có thể tăng nếu một dòng được tính nhiều lần.</p>}
-      {error&&<p className="profile-error" role="alert">{error}</p>}
+      {warning&&<p role="alert" className="model-warning"><UiIcon name="alert" size={16}/><span>Bước {warning.alias} có khóa ghép trùng. Dự kiến {warning.rows.toLocaleString('vi-VN')} dòng kết quả, {warning.matchedPairs.toLocaleString('vi-VN')} cặp khớp. Tổng báo cáo có thể tăng nếu một dòng được tính nhiều lần.</span></p>}
+      {error&&<p className="profile-error" role="alert"><ErrorMessage text={error}/></p>}
       <button type="button" className="button primary" disabled={locked||!ready} onClick={()=>void run()}>
-        {pending?'Đang tính báo cáo…':warning?'Xác nhận ghép và tiếp tục':dashboard?'Chạy Dashboard':'Chạy báo cáo'}
+        <UiIcon name={pending?'refresh':'play'} size={14}/>{pending?'Đang tính báo cáo…':warning?'Xác nhận ghép và tiếp tục':dashboard?'Chạy Dashboard':'Chạy báo cáo'}
       </button>
     </div>}
   </section>;

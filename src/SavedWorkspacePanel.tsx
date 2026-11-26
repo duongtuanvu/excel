@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { UiIcon } from './UiIcons';
 import type { ManagedSource } from './source-model';
 import type { SavedSource, SavedWorkspace } from './workspace-model';
 import PeriodPanel from './PeriodPanel';
@@ -23,11 +24,11 @@ function Slot({slot,loaded,disabled,onAttach,onForget,onActivate}:{
   return <li className="saved-slot">
     <div className="saved-slot-head"><strong title={slot.alias}>{slot.alias}</strong><span className={loaded?'slot-badge ready':'slot-badge'}>{loaded?'Đã nạp':'Chờ file'}</span></div>
     <small title={slot.sheet}>{slot.sheet} · {slot.columns.length} cột</small>
-    {loaded?<button className="button" disabled={disabled} onClick={()=>onActivate(loaded.id)}>Mở báo cáo</button>:<>
+    {loaded?<button className="button" disabled={disabled} onClick={()=>onActivate(loaded.id)}><UiIcon name="eye" size={13}/>Mở báo cáo</button>:<>
       <input ref={picker} type="file" accept=".xlsx,.xls,.csv,.tsv" hidden disabled={disabled} aria-label={'File cho nguồn '+slot.alias} onChange={event=>{
         const file=event.target.files?.[0];event.target.value='';if(file)onAttach(slot.id,file);
       }}/>
-      {confirm?<div className="slot-confirm"><small>Bỏ cấu hình nguồn này khỏi tài khoản? File gốc không bị xóa.</small><div className="slot-actions"><button className="button danger-button" disabled={disabled} onClick={()=>{setConfirm(false);onForget(slot.id);}}>Xác nhận bỏ</button><button className="button" onClick={()=>setConfirm(false)}>Hủy</button></div></div>:<div className="slot-actions"><button className="button" disabled={disabled} onClick={()=>picker.current?.click()}>Chọn file</button><button className="button text-button" disabled={disabled} onClick={()=>setConfirm(true)}>Bỏ cấu hình</button></div>}
+      {confirm?<div className="slot-confirm"><small>Bỏ cấu hình nguồn này khỏi tài khoản? File gốc không bị xóa.</small><div className="slot-actions"><button className="button danger-button" disabled={disabled} onClick={()=>{setConfirm(false);onForget(slot.id);}}>Xác nhận bỏ</button><button className="button" onClick={()=>setConfirm(false)}>Hủy</button></div></div>:<div className="slot-actions"><button className="button" disabled={disabled} onClick={()=>picker.current?.click()}><UiIcon name="upload" size={13}/>Chọn file</button><button className="button text-button" disabled={disabled} onClick={()=>setConfirm(true)}>Bỏ cấu hình</button></div>}
     </>}
   </li>;
 }
@@ -49,7 +50,7 @@ export default function SavedWorkspacePanel({saved,sources,disabled,onSave,onAtt
         <button className="button" onClick={()=>setForget(null)}>Hủy</button>
       </div>:<button className="button text-button" disabled={disabled} onClick={()=>setForget(model.id)}>Bỏ bước xử lý</button>)}
     </li>)}</ul>}
-    <button className="button primary" disabled={disabled||!real.length} onClick={onSave}>Lưu workspace</button>
+    <button className="button primary" disabled={disabled||!real.length} onClick={onSave}><UiIcon name="save" size={15}/>Lưu workspace</button>
     <small className="source-local-note">Lưu tất cả nguồn thật đang mở; nguồn đã lưu nhưng chưa nạp vẫn được giữ. Tên nguồn, cột và giá trị bộ lọc có thể nhạy cảm.</small>
   </div>;
 }

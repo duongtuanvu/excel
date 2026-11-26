@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import App from './App';
+import { UiIcon } from './UiIcons';
 import type { AccountSnapshot, AccountSettings } from './account-model';
 import { AccountError, checkSession, endSession, loadSession, putSettings } from './account-api';
 
@@ -49,19 +50,33 @@ function initialMessage() {
 function LoginScreen({ gate, retry }: { gate: Exclude<Gate, {type:'ready'}>; retry: () => void }) {
   return <main className="auth-layout">
     <section className="auth-intro">
-      <div className="auth-brand"><img src="/favicon.svg" width="44" height="44" alt=""/><span>KySheet<small>REPORT AUTOMATION</small></span></div>
-      <div className="auth-copy"><span className="auth-eyebrow">YOUR PRIVATE WORKSPACE</span><h1>Thiết kế một lần.<br/>Báo cáo mọi kỳ.</h1><p>Biến dữ liệu Excel thành báo cáo có thể tái sử dụng. Cấu hình theo tài khoản, dữ liệu phân tích ngay trên thiết bị.</p></div>
-      <div className="auth-facts"><div><span>01</span><strong>Excel local-first</strong><small>Workbook không gửi lên máy chủ.</small></div><div><span>02</span><strong>Không gian riêng</strong><small>Hồ sơ và cấu hình của từng tài khoản.</small></div><div><span>03</span><strong>Dùng lại mọi kỳ</strong><small>Đăng nhập để khôi phục mẫu đã lưu.</small></div></div>
+      <div className="auth-brand"><img src="/favicon.svg" width="44" height="44" alt=""/><span>KySheet<small>EXCEL REPORT STUDIO</small></span></div>
+      <div className="auth-copy">
+        <span className="auth-eyebrow">YOUR PRIVATE WORKSPACE</span>
+        <h1>Thiết kế một lần.<br/>Báo cáo mọi kỳ.</h1>
+        <p>Biến dữ liệu Excel thành hệ thống báo cáo, Pivot và Dashboard có thể tái sử dụng. Cấu hình đồng bộ theo tài khoản, toàn bộ dữ liệu xử lý trực tiếp trên thiết bị.</p>
+      </div>
+      <div className="auth-facts">
+        <div><span className="auth-fact-num">01</span><strong>Excel local-first</strong><small>Workbook không gửi lên máy chủ.</small></div>
+        <div><span className="auth-fact-num">02</span><strong>Không gian riêng</strong><small>Hồ sơ, mẫu và cấu trúc theo tài khoản.</small></div>
+        <div><span className="auth-fact-num">03</span><strong>Dùng lại mọi kỳ</strong><small>Nạp file kỳ mới, tính lại tự động.</small></div>
+      </div>
     </section>
-    <section className="auth-main"><div className="auth-card">
-      <span className="auth-pill">KYSHEET / ACCOUNT</span><h2>{gate.type==='loading'?'Đang kiểm tra phiên':'Chào mừng đến KySheet'}</h2>
-      <p>{gate.type==='loading'?'Đang kết nối không gian cá nhân…':'Đăng nhập để bắt đầu làm việc và đồng bộ cấu hình báo cáo của bạn.'}</p>
-      {gate.type==='loading'?<div role="status" className="auth-loading"><span className="spinner"/> Đang tải tài khoản</div>:<>
-        {gate.message && <div className="notice error" role="alert">{gate.message}</div>}
-        {gate.type==='error'?<button className="button primary auth-google" onClick={retry}>Thử kết nối lại</button>:<form method="POST" action="/api/auth/login"><button className="button auth-google" type="submit"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 48 48"><path fill="#4285f4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.7c3.9-3.6 6-8.8 6-15z"/><path fill="#34a853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.7-5.1c-1.8 1.2-4.1 1.9-6.8 1.9-5.3 0-9.8-3.6-11.4-8.4H5.7v5.2A20 20 0 0 0 24 44z"/><path fill="#fbbc05" d="M12.6 27.5a12 12 0 0 1 0-7.6v-5.2H5.7a20 20 0 0 0 0 18z"/><path fill="#ea4335" d="M24 12.1c3 0 5.7 1 7.8 3l5.8-5.7A19.2 19.2 0 0 0 24 4 20 20 0 0 0 5.7 14.7l6.9 5.2c1.6-4.8 6.1-7.8 11.4-7.8z"/></svg>Tiếp tục với Google</button></form>}
-      </>}
-      <p className="auth-privacy">KySheet lưu email, hồ sơ, mẫu, cấu trúc nguồn và cấu hình đã lưu trong tài khoản. Tên cột và giá trị bộ lọc có thể chứa thông tin nhạy cảm. Không lưu mật khẩu Google hoặc workbook trên server.</p>
-    </div><footer>KySheet · Private report workspace<nav className="public-links" aria-label="Thông tin KySheet"><a href="/about/" target="_blank" rel="noopener noreferrer">Giới thiệu</a><a href="/privacy/" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/terms/" target="_blank" rel="noopener noreferrer">Điều khoản</a></nav></footer></section>
+    <section className="auth-main">
+      <div className="auth-card">
+        <div className="auth-card-head">
+          <span className="auth-pill"><UiIcon name="shield" size={13}/> KYSHEET / ACCOUNT</span>
+          <h2>{gate.type==='loading'?'Đang kiểm tra phiên':'Chào mừng đến KySheet'}</h2>
+          <p>{gate.type==='loading'?'Đang kết nối không gian cá nhân…':'Đăng nhập để bắt đầu làm việc và đồng bộ cấu hình báo cáo của bạn.'}</p>
+        </div>
+        {gate.type==='loading'?<div role="status" className="auth-loading"><span className="spinner"/> Đang tải tài khoản…</div>:<>
+          {gate.message && <div className="notice error" role="alert"><UiIcon name="alert" size={16}/><span>{gate.message}</span></div>}
+          {gate.type==='error'?<button className="button primary auth-google" onClick={retry}><UiIcon name="refresh" size={16}/>Thử kết nối lại</button>:<form method="POST" action="/api/auth/login"><button className="button auth-google" type="submit"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 48 48"><path fill="#4285f4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.7c3.9-3.6 6-8.8 6-15z"/><path fill="#34a853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.7-5.1c-1.8 1.2-4.1 1.9-6.8 1.9-5.3 0-9.8-3.6-11.4-8.4H5.7v5.2A20 20 0 0 0 24 44z"/><path fill="#fbbc05" d="M12.6 27.5a12 12 0 0 1 0-7.6v-5.2H5.7a20 20 0 0 0 0 18z"/><path fill="#ea4335" d="M24 12.1c3 0 5.7 1 7.8 3l5.8-5.7A19.2 19.2 0 0 0 24 4 20 20 0 0 0 5.7 14.7l6.9 5.2c1.6-4.8 6.1-7.8 11.4-7.8z"/></svg>Tiếp tục với Google</button></form>}
+        </>}
+        <p className="auth-privacy">KySheet lưu email, hồ sơ, mẫu, cấu trúc nguồn và cấu hình đã lưu trong tài khoản. Tên cột và giá trị bộ lọc có thể chứa thông tin nhạy cảm. Không lưu mật khẩu Google hoặc workbook trên server.</p>
+      </div>
+      <footer>KySheet · Private report workspace<nav className="public-links" aria-label="Thông tin KySheet"><a href="/about/" target="_blank" rel="noopener noreferrer">Giới thiệu</a><a href="/privacy/" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/terms/" target="_blank" rel="noopener noreferrer">Điều khoản</a></nav></footer>
+    </section>
   </main>;
 }
 

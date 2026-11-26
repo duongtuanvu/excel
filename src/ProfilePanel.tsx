@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { UiIcon } from './UiIcons';
+import { ErrorMessage } from './ErrorText';
 import type { ManagedSource } from './source-model';
 import type { ColumnProfile, Distribution, SourceProfile } from './profile-model';
 
@@ -53,11 +55,12 @@ export default function ProfilePanel({source,disabled,onProfile,onDistribution}:
     }catch(e){if(alive.current)setError(e instanceof Error?e.message:'PROFILE_FAILED: Không thể thống kê dữ liệu.');}
     finally{running.current=false;if(alive.current)setPending(null);}
   }
-  return <section className="report-card profile-card" aria-label="Chất lượng dữ liệu">
-    <div className="card-heading profile-heading"><div><span className="profile-kicker">DATA QUALITY / LOCAL</span><h2>Chất lượng dữ liệu</h2><p>Toàn bộ nguồn hiện tại · không áp dụng bộ lọc báo cáo</p></div><button type="button" className="button primary" disabled={locked} onClick={()=>void run('profile')}>{current?'Tính lại thống kê':'Phân tích chất lượng'}</button></div>
+  const expanded=Boolean(current||pending==='profile'||error);
+  return <section className={'report-card profile-card'+(expanded?' is-open':'')} aria-label="Chất lượng dữ liệu">
+    <div className="card-heading profile-heading"><div className="card-title-row"><span className="tool-badge"><UiIcon name="quality" size={18}/></span><div><h2>Chất lượng dữ liệu</h2><p>Ô trống, giá trị duy nhất và bản ghi trùng trên toàn bộ nguồn</p></div></div><button type="button" className="button primary" disabled={locked} onClick={()=>void run('profile')}><UiIcon name="quality" size={15}/>{current?'Tính lại thống kê':'Phân tích chất lượng'}</button></div>
     {pending==='profile'&&<div className="profile-status" role="status"><span className="spinner"/> Đang tính thống kê nguồn…</div>}
-    {error&&<div className="profile-error" role="alert">{error}</div>}
-    {!current&&pending!=='profile'&&<div className="profile-empty"><strong>Hiểu dữ liệu trước khi lập báo cáo.</strong><p>Kiểm tra ô trống, giá trị khác nhau, bản ghi trùng và thống kê từng cột. Chỉ chạy khi bạn yêu cầu; kết quả không gửi lên máy chủ.</p></div>}
+    {error&&<div className="profile-error" role="alert"><ErrorMessage text={error}/></div>}
+    {!current&&pending!=='profile'&&<div className="profile-empty"><p>Kiểm tra ô trống, giá trị khác nhau, bản ghi trùng và thống kê từng cột (không áp dụng bộ lọc). Dữ liệu không rời khỏi thiết bị.</p></div>}
     {current&&<div className="profile-content">
       <div className="profile-stats">
         <Stat label="Dòng dữ liệu" value={current.rows} detail={fmt.format(current.columns.length)+' cột'} id="profile-rows"/>
@@ -73,7 +76,7 @@ export default function ProfilePanel({source,disabled,onProfile,onDistribution}:
       </div>
       <p className="profile-note">Giá trị khác nhau không tính ô trống. Sai kiểu tính trên giá trị không trống, theo kiểu đã nhận diện sau import. Cột văn bản (kể cả cột chứa kiểu hỗn hợp) không đánh giá lỗi parse; dấu — nghĩa là không áp dụng hoặc không có giá trị hữu hạn. Số dùng DOUBLE.</p>
       <div className="profile-distribution">
-        <div className="profile-distribution-head"><div><h3>Phân bố giá trị</h3><p>Top 10 giá trị theo tần suất, không tính ô trống</p></div><div className="profile-controls"><label className="field"><span>Cột phân bố</span><select aria-label="Cột phân bố" value={columnId} disabled={locked} onChange={e=>{setColumnId(e.target.value);setDistribution(null);setError('');}}>{current.columns.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label><button type="button" className="button" disabled={locked||!selected} onClick={()=>void run('distribution')}>Xem phân bố</button></div></div>
+        <div className="profile-distribution-head"><div><h3>Phân bố giá trị</h3><p>Top 10 giá trị theo tần suất, không tính ô trống</p></div><div className="profile-controls"><label className="field"><span>Cột phân bố</span><select aria-label="Cột phân bố" value={columnId} disabled={locked} onChange={e=>{setColumnId(e.target.value);setDistribution(null);setError('');}}>{current.columns.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label><button type="button" className="button" disabled={locked||!selected} onClick={()=>void run('distribution')}><UiIcon name="barChart" size={14}/>Xem phân bố</button></div></div>
         {pending==='distribution'&&<div className="profile-status" role="status"><span className="spinner"/> Đang tính phân bố…</div>}
         {values&&<div className="profile-values" data-testid="profile-distribution">
           <p className="profile-note">{fmt.format(values.distinct)} giá trị khác nhau · {fmt.format(values.nonEmpty)} ô không trống · hiển thị {ratio(values.shown,values.nonEmpty)}</p>

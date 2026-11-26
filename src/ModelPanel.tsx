@@ -1,4 +1,6 @@
 import {useState,useRef} from 'react';
+import {UiIcon} from './UiIcons';
+import {ErrorMessage} from './ErrorText';
 import type {ManagedSource} from './source-model';
 import {MODEL_OPERATIONS,MODEL_LABELS,defaultPairs,isUnion} from './data-model';
 import type {ModelOperation,ModelInput,ModelPair,ModelPreview} from './data-model';
@@ -24,7 +26,7 @@ export default function ModelPanel({sources,disabled,onRequest}:Props){
  }
  if(real.length<2)return null;
  const stats=preview?.stats;
- return <section className="report-card schema-card" aria-label="Mô hình dữ liệu"><div className="card-heading"><div><h2>Mô hình dữ liệu</h2><p>JOIN / UNION hai nguồn Excel</p></div><button type="button" className="button" disabled={locked} onClick={()=>setOpen(v=>!v)} aria-expanded={open}>{open?'Thu gọn':'Mở Data Model'}</button></div>
+ return <section className={'report-card schema-card'+(open?' is-open':'')} aria-label="Mô hình dữ liệu"><div className="card-heading"><div className="card-title-row"><span className="tool-badge"><UiIcon name="model" size={18}/></span><div><h2>Mô hình dữ liệu</h2><p>JOIN / UNION nhiều nguồn Excel</p></div></div><button type="button" className="button" disabled={locked} onClick={()=>setOpen(v=>!v)} aria-expanded={open}><UiIcon name={open?'chevronDown':'chevronRight'} size={15}/>{open?'Thu gọn':'Mở Data Model'}</button></div>
  {open&&<div className="schema-body"><div className="model-fields">
  <label className="field"><span>Bảng trái</span><select aria-label="Bảng trái" value={leftId} disabled={locked} onChange={e=>change(e.target.value,rightId,operation)}>{real.map(s=><option value={s.id} key={s.id}>{s.alias}</option>)}</select></label>
  <label className="field"><span>Bảng phải</span><select aria-label="Bảng phải" value={rightId} disabled={locked} onChange={e=>change(leftId,e.target.value,operation)}>{real.map(s=><option value={s.id} key={s.id}>{s.alias}</option>)}</select></label>
@@ -32,12 +34,12 @@ export default function ModelPanel({sources,disabled,onRequest}:Props){
  <label className="field"><span>Tên bảng kết quả</span><input aria-label="Tên bảng kết quả" value={alias} maxLength={100} disabled={locked} onChange={e=>{setAlias(e.target.value);invalidate();}}/></label>
  </div><p className="profile-note">{union?'UNION loại dòng trùng; UNION ALL giữ mọi dòng. Ghép đủ cột theo cùng kiểu dữ liệu.':'JOIN so sánh khóa chính xác trên giá trị đã chuẩn hóa, phân biệt hoa/thường; NULL, rỗng và chỉ dấu cách không khớp. Hai bảng cần cùng kiểu khóa.'}</p>
  <div className="table-scroll schema-table"><table><thead><tr><th>{union?'Cột bảng trái':'Khóa trái'}</th><th>{union?'Cột bảng phải':'Khóa phải'}</th>{!union&&<th>Thao tác</th>}</tr></thead><tbody>{pairs.map((p,i)=><tr key={i}><td><select aria-label={'Cột trái '+(i+1)} disabled={locked||union} value={p.left} onChange={e=>{setPairs(v=>v.map((x,j)=>i===j?{...x,left:e.target.value,right:''}:x));invalidate();}}><option value="">Chọn cột</option>{left?.columns.map(c=><option key={c.id} value={c.id}>{c.name} ({c.kind})</option>)}</select></td><td><select aria-label={'Cột phải '+(i+1)} disabled={locked} value={p.right} onChange={e=>{setPairs(v=>v.map((x,j)=>i===j?{...x,right:e.target.value}:x));invalidate();}}><option value="">Chọn cột</option>{right?.columns.map(c=><option key={c.id} value={c.id}>{c.name} ({c.kind})</option>)}</select></td>{!union&&<td><button type="button" className="button" disabled={locked||pairs.length===1} onClick={()=>{setPairs(v=>v.filter((_,j)=>i!==j));invalidate();}}>Bỏ khóa</button></td>}</tr>)}</tbody></table></div>
- {!union&&<button type="button" className="button" disabled={locked||pairs.length>=3} onClick={()=>{setPairs(v=>[...v,{left:'',right:''}]);invalidate();}}>Thêm cặp khóa</button>}
- {pending&&<p role="status" className="profile-note">Đang xử lý mô hình…</p>}
- {error&&<p role="alert" className="profile-error">{error}</p>}
+ {!union&&<button type="button" className="button dashed" disabled={locked||pairs.length>=3} onClick={()=>{setPairs(v=>[...v,{left:'',right:''}]);invalidate();}}><UiIcon name="plus" size={14}/>Thêm cặp khóa</button>}
+ {pending&&<p role="status" className="profile-note"><span className="spinner"/> Đang xử lý mô hình…</p>}
+ {error&&<p role="alert" className="profile-error"><ErrorMessage text={error}/></p>}
  {preview&&<div className="model-preview"><p role="status"><strong>{fmt.format(preview.rows)} dòng · {preview.columns.length} cột kết quả</strong></p>
  {stats?<><div className="profile-stats">{[{label:'Quan hệ',value:stats.cardinality},{label:'Cặp khớp',value:fmt.format(stats.matchedPairs)},{label:'Trái không khớp',value:fmt.format(stats.unmatchedLeft)},{label:'Phải không khớp',value:fmt.format(stats.unmatchedRight)}].map(x=><div className="profile-stat" key={x.label}><span>{x.label}</span><strong>{x.value}</strong></div>)}</div><p className="profile-note">Nhóm khóa trùng: trái {stats.leftDuplicateKeys}, phải {stats.rightDuplicateKeys}, trùng cả hai {stats.manyToManyKeys}. Quan hệ tổng thể tính trên các khóa khớp.</p>{stats.expansion&&<label className="model-warning"><input type="checkbox" checked={confirm} disabled={locked} onChange={e=>setConfirm(e.target.checked)}/> Tôi hiểu JOIN có thể nhân bản dòng và làm tăng tổng tiền; xác nhận tạo bảng.</label>}</>:<p className="profile-note">Số dòng trùng đã loại: {fmt.format(preview.removedDuplicates??0)}</p>}
  <p className="profile-note">Cột kết quả: {preview.columns.map(c=>c.name).join(' · ')}</p></div>}
- <div className="schema-actions"><button type="button" className="button" disabled={locked||!valid} onClick={()=>void run(false)}>Kiểm tra mô hình</button><button type="button" className="button primary" disabled={locked||!valid||!preview||!!preview.stats?.expansion&&!confirm} onClick={()=>void run(true)}>Tạo bảng kết quả</button></div>
+ <div className="schema-actions"><button type="button" className="button" disabled={locked||!valid} onClick={()=>void run(false)}><UiIcon name="eye" size={14}/>Kiểm tra mô hình</button><button type="button" className="button primary" disabled={locked||!valid||!preview||!!preview.stats?.expansion&&!confirm} onClick={()=>void run(true)}><UiIcon name="check" size={14}/>Tạo bảng kết quả</button></div>
  <p className="profile-note">Bạn có thể dùng bảng kết quả ở bước ghép tiếp theo. Chọn Lưu workspace để dùng lại các bước ghép và cấu hình báo cáo khi chạy kỳ mới.</p></div>}</section>;
 }

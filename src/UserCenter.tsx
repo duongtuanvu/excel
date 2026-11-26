@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { UiIcon } from './UiIcons';
+import type { IconName } from './UiIcons';
+import { ErrorMessage } from './ErrorText';
 import type { Config } from './model';
 import { addTemplate, initials, MAX_TEMPLATES, validateProfile } from './user-model';
 import type { LocalUser, SavedTemplate } from './user-model';
@@ -62,44 +65,50 @@ export default function UserCenter({ state, config, onSave, onReset, accountEmai
     void act(() => onSave(addTemplate(data, config, templateName, crypto.randomUUID(), new Date().toISOString())), 'Đã thêm mẫu vào thư viện.');
   }
 
+  const navItems: { id: Tab; label: string; icon: IconName }[] = [
+    { id: 'profile', label: 'Hồ sơ & giao diện', icon: 'user' },
+    { id: 'templates', label: 'Mẫu của tôi', icon: 'layers' },
+    { id: 'privacy', label: 'Dữ liệu & riêng tư', icon: 'shield' },
+  ];
+
   return <dialog className="user-dialog" ref={dialog} aria-labelledby="user-title" onCancel={e => { e.preventDefault(); onDismiss(); }}>
     <div className="user-shell">
       <header className="user-heading">
         <div className="user-heading-copy"><span className="user-kicker">KYSHEET / WORKSPACE</span><h2 id="user-title">Không gian cá nhân</h2><p>Hồ sơ, mẫu báo cáo và quyền riêng tư của tài khoản.</p></div>
-        <button type="button" className="button icon-button user-close" aria-label="Đóng không gian cá nhân" onClick={onDismiss}>×</button>
+        <button type="button" className="button icon-button user-close" aria-label="Đóng không gian cá nhân" onClick={onDismiss}><UiIcon name="close" size={17}/></button>
       </header>
       <div className="user-body">
         <nav className="user-nav" aria-label="Mục không gian cá nhân">
           <div className="user-summary"><span className="user-avatar large">{initials(data.profile.displayName)}</span><strong>{data.profile.displayName}</strong><small>{data.profile.workspace}</small><span className="local-label">GOOGLE ACCOUNT</span></div>
-          {([{ id: 'profile', label: 'Hồ sơ & giao diện' }, { id: 'templates', label: 'Mẫu của tôi' }, { id: 'privacy', label: 'Dữ liệu & riêng tư' }] as const).map(item => <button type="button" key={item.id} className={'user-nav-button ' + (tab === item.id ? 'active' : '')} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { setTab(item.id); setError(''); setFeedback(''); setConfirmReset(false); setPendingDelete(null); }}>{item.label}{item.id === 'templates' && <span>{data.templates.length}</span>}</button>)}
+          {navItems.map(item => <button type="button" key={item.id} className={'user-nav-button ' + (tab === item.id ? 'active' : '')} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { setTab(item.id); setError(''); setFeedback(''); setConfirmReset(false); setPendingDelete(null); }}><span className="user-nav-label"><UiIcon name={item.icon} size={15}/>{item.label}</span>{item.id === 'templates' && <span className="user-nav-count">{data.templates.length}</span>}</button>)}
         </nav>
         <section className="user-content" aria-label="Nội dung không gian cá nhân"><fieldset disabled={saving || pending} className="account-fields">
-          {state.warning && <div role="alert" className="notice warning user-notice">{state.warning}</div>}
-          {error && <div role="alert" className="notice error user-notice">{error}</div>}
-          {feedback && <div role="status" className="notice user-notice">{feedback}</div>}
+          {state.warning && <div role="alert" className="notice warning user-notice"><UiIcon name="alert" size={16}/><span>{state.warning}</span></div>}
+          {error && <div role="alert" className="notice error user-notice"><UiIcon name="alert" size={16}/><ErrorMessage text={error}/></div>}
+          {feedback && <div role="status" className="notice user-notice"><UiIcon name="check" size={16}/><span>{feedback}</span></div>}
           {tab === 'profile' && <>
             <h3>Hồ sơ của bạn</h3><p className="user-description">Hồ sơ được lưu riêng theo tài khoản Google đã xác thực.</p>
-            <p className="user-description">{accountEmail}</p><form className="user-form" onSubmit={saveProfile}>
+            <p className="user-email-chip">{accountEmail}</p><form className="user-form" onSubmit={saveProfile}>
               <label className="field"><span>Tên hiển thị</span><input required maxLength={64} value={draft.displayName} onChange={e => setDraft({ ...draft, displayName: e.target.value })}/></label>
               <label className="field"><span>Tên workspace</span><input required maxLength={80} value={draft.workspace} onChange={e => setDraft({ ...draft, workspace: e.target.value })}/></label>
               <label className="field"><span>Mật độ bảng dữ liệu</span><select value={draft.density} onChange={e => setDraft({ ...draft, density: e.target.value as LocalUser['profile']['density'] })}><option value="comfortable">Thoải mái</option><option value="compact">Gọn gàng</option></select></label>
-              <div className="user-form-actions"><button type="submit" className="button primary">Lưu hồ sơ</button></div>
+              <div className="user-form-actions"><button type="submit" className="button primary"><UiIcon name="save" size={14}/>Lưu hồ sơ</button></div>
             </form>
           </>}
           {tab === 'templates' && <>
             <h3>Mẫu báo cáo của tôi</h3><p className="user-description">{data.templates.length}/{MAX_TEMPLATES} mẫu trong tài khoản này. Lưu cấu hình và bộ lọc, không lưu workbook hoặc kết quả báo cáo.</p>
             <form className="user-template-form" onSubmit={saveTemplate}>
               <label className="field"><span>Tên mẫu mới</span><input required maxLength={100} value={templateName} onChange={e => setTemplateName(e.target.value)} disabled={!config || data.templates.length >= MAX_TEMPLATES}/></label>
-              <button type="submit" className="button primary" disabled={!config || data.templates.length >= MAX_TEMPLATES}>Lưu báo cáo hiện tại</button>
+              <button type="submit" className="button primary" disabled={!config || data.templates.length >= MAX_TEMPLATES}><UiIcon name="plus" size={14}/>Lưu báo cáo hiện tại</button>
             </form>
             {!config && <p className="user-description">Nạp dữ liệu và chờ báo cáo tính xong trước khi lưu mẫu.</p>}
             <p className="user-hint">Giá trị bộ lọc và tên cột có thể nhạy cảm. Chỉ lưu hoặc chia sẻ mẫu khi phù hợp.</p>
             <div className="user-template-list">
-              {!data.templates.length && <div className="user-empty"><strong>Chưa có mẫu báo cáo</strong><p>Lưu cấu hình hiện tại để tái sử dụng khi thay file Excel kỳ sau.</p></div>}
+              {!data.templates.length && <div className="user-empty"><UiIcon name="layers" size={24}/><strong>Chưa có mẫu báo cáo</strong><p>Lưu cấu hình hiện tại để tái sử dụng khi thay file Excel kỳ sau.</p></div>}
               {data.templates.map(item => <article className="user-template" key={item.id}>
                 <div className="user-template-title"><strong title={item.name}>{item.name}</strong><small>{formatDate.format(new Date(item.createdAt))} · {item.config.aggregate.toUpperCase()} · {item.config.groups.length} nhóm</small></div>
                 {pendingDelete === item.id ? <div className="user-template-actions"><span className="user-hint">Xóa mẫu này?</span><button type="button" className="button danger-button" onClick={() => void act(async () => { await onSave({ ...data, templates: data.templates.filter(t => t.id !== item.id) }); setPendingDelete(null); }, 'Đã xóa mẫu.')}>Xóa</button><button type="button" className="button" onClick={() => setPendingDelete(null)}>Hủy</button></div> :
-                <div className="user-template-actions"><button type="button" className="button" disabled={!config} onClick={() => act(() => onApply(item.config), 'Đã áp dụng mẫu.')}>Áp dụng</button><button type="button" className="button" onClick={() => act(() => onDownload(item), 'Đã yêu cầu tải JSON.')}>JSON</button><button type="button" className="button" aria-label={'Xóa mẫu ' + item.name} onClick={() => setPendingDelete(item.id)}>Xóa</button></div>}
+                <div className="user-template-actions"><button type="button" className="button" disabled={!config} onClick={() => act(() => onApply(item.config), 'Đã áp dụng mẫu.')}><UiIcon name="check" size={13}/>Áp dụng</button><button type="button" className="button" onClick={() => act(() => onDownload(item), 'Đã yêu cầu tải JSON.')}><UiIcon name="download" size={13}/>JSON</button><button type="button" className="button" aria-label={'Xóa mẫu ' + item.name} onClick={() => setPendingDelete(item.id)}><UiIcon name="trash" size={13}/>Xóa</button></div>}
               </article>)}
             </div>
           </>}
@@ -113,7 +122,7 @@ export default function UserCenter({ state, config, onSave, onReset, accountEmai
           </>}
         </fieldset></section>
       </div>
-      <footer className="user-footer"><span>Tài khoản riêng · Workbook không gửi lên máy chủ</span><div className="user-form-actions"><button type="button" className="button danger-button" disabled={saving || pending} onClick={() => void act(onLogout, 'Đã đăng xuất.')}>Đăng xuất</button><button type="button" className="button" onClick={onDismiss}>Đóng</button></div></footer>
+      <footer className="user-footer"><span>Tài khoản riêng · Workbook không gửi lên máy chủ</span><div className="user-form-actions"><button type="button" className="button danger-button" disabled={saving || pending} onClick={() => void act(onLogout, 'Đã đăng xuất.')}><UiIcon name="logout" size={14}/>Đăng xuất</button><button type="button" className="button" onClick={onDismiss}>Đóng</button></div></footer>
     </div>
   </dialog>;
 }
