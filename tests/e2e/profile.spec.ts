@@ -32,7 +32,9 @@ test('exact whole-source quality statistics, frequency and invalidation after re
   await expect(panel.getByTestId('profile-missing')).toHaveText('3');
   await expect(panel.getByTestId('profile-groups')).toHaveText('1');
   await expect(panel.getByTestId('profile-duplicates')).toHaveText('1');
-  const amount=panel.getByRole('row').filter({has:panel.getByRole('rowheader',{name:/Amount/})});
+  // Playwright evaluates `has` relative to each candidate row, not the page.
+  const amount=panel.getByRole('row').filter({has:page.getByRole('rowheader',{name:/^Amount\b/})});
+  await expect(amount).toHaveCount(1,{timeout:10000});
   await expect(amount.getByRole('cell').nth(1)).toHaveText('4');
   await expect(amount.getByRole('cell').nth(3)).toHaveText('10');
   await expect(amount.getByRole('cell').nth(4)).toHaveText('40');

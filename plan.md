@@ -404,3 +404,5 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [ ] CI và release job v0.5.2 pass, xác minh HEAD main, Cloudflare deploy/smoke test. Không tick cho đến khi có bằng chứng.
 
 - Sửa cú pháp YAML biểu thức if chứa dấu hai chấm bằng folded scalar; run 45769208332 bị từ chối trước khi tạo job.
+
+- [x] CI run 45769265748: unit/integration và build pass; 10/11 E2E pass. Profile runtime đã hiển thị kết quả, assertions rows/missing/groups/duplicates pass, header-only và phân bố rỗng pass. Lỗi còn lại do Playwright `has` dùng locator đã scope theo panel nên không tìm thấy rowheader trong row. Sửa inner locator tương đối và kiểm tra đúng một dòng; giữ nguyên mọi assertion thống kê, phân bố, mobile và thay nguồn. Chờ CI mới.
