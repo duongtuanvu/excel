@@ -335,3 +335,8 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 ### Cập nhật trang public
 
 - Auth đã merge main theo yêu cầu chủ dự án (fbef146). Bổ sung HTML tĩnh Privacy/Terms/About; không phụ thuộc OAuth hoặc D1. Chưa xác nhận production deploy, OAuth publish hay kiểm thử E2E.
+
+### OAuth troubleshooting
+
+- [x] Source chuẩn hóa/kiểm tra OAuth credentials, phân loại lỗi Google/D1 theo stage và log mã lỗi cố định không chứa bí mật.
+- [ ] Xác minh nguyên nhân lỗi login trên production và chạy lại flow Google thành công; chưa coi tính năng auth đã nghiệm thu.

@@ -49,7 +49,10 @@ export default {
       return await api(request, env);
     } catch {
       // Never log OAuth codes, cookies, workbook contents or user settings.
-      if (url.pathname === '/api/auth/callback' || url.pathname === '/api/auth/login') return redirect('/?auth=login_failed');
+      if (url.pathname === '/api/auth/callback' || url.pathname === '/api/auth/login') {
+        console.warn(JSON.stringify({event:'oauth_failed',stage:'route',reason:'login_failed'}));
+        return redirect('/?auth=login_failed');
+      }
       return json({ error: 'Dịch vụ tài khoản tạm thời không khả dụng.' }, 503);
     }
   },

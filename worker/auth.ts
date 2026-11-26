@@ -1,11 +1,21 @@
 import type { Env } from './db';
+import { credentials, providerCode, tokenFailure } from './auth-diagnostics';
 import { defaultSettings } from '../src/account-model';
 import { cookie, getCookie, hash, isToken, now, OAUTH_COOKIE, OAUTH_SECONDS, randomToken, redirect, SESSION_COOKIE, SESSION_SECONDS } from './security';
 
 type Session = { id: string; email: string; expiresAt: number; tokenHash: string };
 type GoogleIdentity = { sub: string; email: string; name?: string; email_verified: boolean };
 const clearOAuth = () => cookie(OAUTH_COOKIE, '', 0);
-const fail = (reason = 'login_failed') => redirect('/?auth=' + reason, [clearOAuth()]);
+type Stage = 'start' | 'callback' | 'state' | 'token' | 'userinfo' | 'account' | 'session';
+function fail(reason: string, stage: Stage, status?: number) {
+  // Only controlled reason values and numeric status. No exception text or PII.
+  console.warn(JSON.stringify({event:'oauth_failed',stage,reason,...(status === undefined ? {} : {status})}));
+  return redirect('/?auth=' + encodeURIComponent(reason), [clearOAuth()]);
+}
+function config(env: Env) {
+  if (!env.DB || !env.APP_ORIGIN || !env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null;
+  return credentials(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET);
+}
 export async function session(request: Request, env: Env): Promise<Session | null> {
   const token = getCookie(request, SESSION_COOKIE);
   if (!token) return null;
@@ -13,11 +23,10 @@ export async function session(request: Request, env: Env): Promise<Session | nul
   const row = await env.DB.prepare('SELECT u.id, u.email, s.expires_at AS expiresAt FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').bind(tokenHash, now()).first<Omit<Session, 'tokenHash'>>();
   return row ? { ...row, tokenHash } : null;
 }
-function configured(env: Env): boolean {
-  return Boolean(env.DB && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.APP_ORIGIN);
-}
 export async function startLogin(env: Env): Promise<Response> {
-  if (!configured(env)) return fail('not_configured');
+  const cfg = config(env);
+  if (!cfg) return fail(env.DB && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? 'oauth_config_invalid' : 'not_configured', 'start');
+  try {
   const state = randomToken(), browser = randomToken(), verifier = randomToken();
   const timestamp = now();
   // Bounded expiry cleanup. Production should also configure rate limiting for auth routes.
@@ -28,7 +37,7 @@ export async function startLogin(env: Env): Promise<Response> {
   ]);
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.search = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
+    client_id: cfg.clientId,
     redirect_uri: env.APP_ORIGIN + '/api/auth/callback',
     response_type: 'code',
     scope: 'openid email profile',
@@ -39,6 +48,7 @@ export async function startLogin(env: Env): Promise<Response> {
     prompt: 'select_account',
   }).toString();
   return redirect(url.href, [cookie(OAUTH_COOKIE, browser, OAUTH_SECONDS)]);
+  } catch { return fail('oauth_start_failed', 'start'); }
 }
 function identity(value: unknown): GoogleIdentity {
   if (!value || typeof value !== 'object') throw new Error('Invalid provider response.');
@@ -47,35 +57,51 @@ function identity(value: unknown): GoogleIdentity {
   return { sub: v.sub, email: v.email, email_verified: true, name: typeof v.name === 'string' ? v.name : undefined };
 }
 export async function finishLogin(request: Request, env: Env): Promise<Response> {
-  if (!configured(env)) return fail('not_configured');
+  const cfg = config(env);
+  if (!cfg) return fail(env.DB && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? 'oauth_config_invalid' : 'not_configured', 'callback');
+  let stage: Stage = 'callback';
+  try {
   const url = new URL(request.url);
   const state = url.searchParams.get('state'), browser = getCookie(request, OAUTH_COOKIE);
-  if (!isToken(state) || !browser || url.searchParams.getAll('state').length !== 1) return fail('invalid_state');
+  if (!isToken(state) || !browser || url.searchParams.getAll('state').length !== 1) return fail('invalid_state', 'state');
+  stage = 'state';
   // Consume the attempt atomically, before any provider network calls. No replay.
   const attempt = await env.DB.prepare('DELETE FROM oauth_attempts WHERE state_hash=? AND browser_hash=? AND expires_at>? RETURNING verifier').bind(await hash(state), await hash(browser), now()).first<{ verifier: string }>();
-  if (!attempt) return fail('invalid_state');
-  if (url.searchParams.has('error')) return fail('cancelled');
+  if (!attempt) return fail('invalid_state', 'state');
+  if (url.searchParams.has('error')) {
+    const reason = providerCode(url.searchParams.get('error'));
+    return fail(reason === 'access_denied' ? 'cancelled' : reason === 'unknown' ? 'google_authorization_failed' : 'google_' + reason, 'callback');
+  }
   const code = url.searchParams.get('code');
-  if (!code || code.length > 4096 || url.searchParams.getAll('code').length !== 1) return fail();
+  if (!code || code.length > 4096 || url.searchParams.getAll('code').length !== 1) return fail('oauth_code_missing', 'callback');
+  stage = 'token';
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, code, code_verifier: attempt.verifier, grant_type: 'authorization_code', redirect_uri: env.APP_ORIGIN + '/api/auth/callback' }),
+    body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code, code_verifier: attempt.verifier, grant_type: 'authorization_code', redirect_uri: env.APP_ORIGIN + '/api/auth/callback' }),
   });
-  if (!tokenResponse.ok) return fail();
+  if (!tokenResponse.ok) {
+    let reason = 'google_token_failed';
+    try { const error = await tokenResponse.json() as {error?:unknown}; reason = tokenFailure(error?.error); } catch { /* response may not be JSON */ }
+    return fail(reason, 'token', tokenResponse.status);
+  }
   const tokens = await tokenResponse.json() as { access_token?: unknown; token_type?: unknown };
-  if (typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > 8192 || String(tokens.token_type).toLowerCase() !== 'bearer') return fail();
+  if (typeof tokens.access_token !== 'string' || !tokens.access_token || tokens.access_token.length > 8192 || String(tokens.token_type).toLowerCase() !== 'bearer') return fail('google_token_invalid', 'token');
+  stage = 'userinfo';
   // Obtain verified OIDC identity directly from Google's HTTPS UserInfo endpoint.
   // Do not trust a client-supplied or merely decoded ID token; no Google tokens are persisted.
   const userResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
     redirect: 'error', signal: AbortSignal.timeout(15_000),
     headers: { Authorization: 'Bearer ' + tokens.access_token },
   });
-  if (!userResponse.ok) return fail();
-  const google = identity(await userResponse.json());
+  if (!userResponse.ok) return fail('google_userinfo_failed', 'userinfo', userResponse.status);
+  let google: GoogleIdentity;
+  try { google = identity(await userResponse.json()); } catch { return fail('google_identity_invalid', 'userinfo'); }
+  stage = 'account';
   const timestamp = now();
   const user = await env.DB.prepare('INSERT INTO users(id,google_sub,email,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(google_sub) DO UPDATE SET email=excluded.email, updated_at=excluded.updated_at RETURNING id').bind(crypto.randomUUID(), google.sub, google.email, timestamp, timestamp).first<{ id: string }>();
   if (!user) throw new Error('User creation failed.');
+  stage = 'session';
   const token = randomToken(), previous = getCookie(request, SESSION_COOKIE);
   const statements = [
     env.DB.prepare('INSERT INTO user_settings(user_id,payload,revision,updated_at) VALUES (?,?,0,?) ON CONFLICT(user_id) DO NOTHING').bind(user.id, JSON.stringify(defaultSettings(google.name || 'Người dùng')), timestamp),
@@ -84,4 +110,12 @@ export async function finishLogin(request: Request, env: Env): Promise<Response>
   if (previous) statements.push(env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(previous)));
   await env.DB.batch(statements);
   return redirect('/', [clearOAuth(), cookie(SESSION_COOKIE, token, SESSION_SECONDS)]);
+  } catch {
+    const reason = stage === 'state' ? 'oauth_state_storage_failed' :
+      stage === 'token' ? 'google_token_failed' :
+      stage === 'userinfo' ? 'google_userinfo_failed' :
+      stage === 'account' ? 'account_storage_failed' :
+      stage === 'session' ? 'session_storage_failed' : 'login_failed';
+    return fail(reason, stage);
+  }
 }

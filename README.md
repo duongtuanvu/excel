@@ -109,3 +109,7 @@ Tiếp theo: multi-source JOIN có kiểm tra cardinality, pivot matrix, calcula
 - Authorized domain: linhsumi.io.vn
 
 Các trang HTML tĩnh trong public/ không cần login, D1 hoặc JavaScript. Link ở login và workspace mở tab mới. Sau deploy, xác minh HTTP 200 và nội dung thật ở cả ba URL. Chính sách mô tả implementation hiện tại, chưa được rà soát pháp lý; chủ dự án cần bổ sung địa chỉ email hỗ trợ trực tiếp khi chốt, xác nhận quy trình xóa tài khoản và retention trước phát hành rộng rãi.
+
+### Chẩn đoán lỗi Google Login
+
+Trang login hiển thị mã lỗi cố định theo bước OAuth. Workers logs ghi event `oauth_failed`, stage, reason và HTTP status nếu có; không ghi body Google, URL callback, credentials, code, state, token, cookie hoặc thông tin user. `google_invalid_client`: kiểm tra runtime Client ID/Secret cùng OAuth client. `google_invalid_grant`: bắt đầu lại login; kiểm tra callback và PKCE. `oauth_start_failed`, `oauth_state_storage_failed`, `account_storage_failed`, `session_storage_failed`: kiểm tra binding DB và schema. GET /api/session 401 khi chưa đăng nhập là bình thường. Không gửi secret, cookie hoặc URL callback chứa code/state khi báo lỗi. Cloudflare platform logs cần được cấu hình để không thu query OAuth nhạy cảm.
