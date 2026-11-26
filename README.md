@@ -1,12 +1,12 @@
 # KySheet v0.4 — Excel report automation
 
-Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Branch auth yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
+Web app local-first: React + TypeScript + Vite, SheetJS và DuckDB-Wasm. Phiên bản v0.4 yêu cầu đăng nhập Google, Cloudflare Workers API và D1. Workbook và kết quả phân tích chỉ tồn tại trong bộ nhớ browser. Hồ sơ, mẫu và cấu hình báo cáo lưu riêng theo tài khoản trên D1; người dùng chủ động lưu. Không tự nhập hồ sơ LocalStorage cũ.
 
 ## Build và kiểm thử
 
 Node.js >= 22.12; npm hoặc Bun.
 
-    git clone -b auth https://github.com/duongtuanvu/excel.git
+    git clone -b main https://github.com/duongtuanvu/excel.git
     cd excel
     bun install
     bun run build
@@ -16,12 +16,12 @@ Vite dev/preview đơn thuần không có Workers API; màn hình auth sẽ khô
 
 ## Cloudflare Workers Builds — Production
 
-**Chưa chuyển production branch sang auth nếu OAuth và kiểm thử chưa sẵn sàng.** File `wrangler.jsonc` trong branch này là cấu hình production thật, không dùng để deploy Worker staging hoặc preview auth kết nối D1 production.
+**Auth đã merge vào main theo yêu cầu chủ dự án; cần hoàn tất OAuth và kiểm thử production.** File `wrangler.jsonc` trong branch này là cấu hình production thật, không dùng để deploy Worker staging hoặc preview auth kết nối D1 production.
 
 | Setting | Value |
 | --- | --- |
 | Repository | duongtuanvu/excel |
-| Production branch | main sau khi merge auth đã nghiệm thu |
+| Production branch | main |
 | Worker name | excel |
 | Domain hiện tại (quản lý trên Dashboard) | https://excel.linhsumi.io.vn |
 | Build command | bun run build |
@@ -99,3 +99,13 @@ Google OAuth server-side Authorization Code + PKCE; cookie HttpOnly, Secure, Sam
 ## Roadmap
 
 Tiếp theo: multi-source JOIN có kiểm tra cardinality, pivot matrix, calculated metrics, biểu đồ nhiều widget, data profiling, streaming ingest/export, CI và benchmark thực tế.
+
+## Trang thông tin công khai / Google Branding
+
+- Homepage: https://excel.linhsumi.io.vn/
+- Privacy: https://excel.linhsumi.io.vn/privacy/
+- Terms: https://excel.linhsumi.io.vn/terms/
+- About: https://excel.linhsumi.io.vn/about/
+- Authorized domain: linhsumi.io.vn
+
+Các trang HTML tĩnh trong public/ không cần login, D1 hoặc JavaScript. Link ở login và workspace mở tab mới. Sau deploy, xác minh HTTP 200 và nội dung thật ở cả ba URL. Chính sách mô tả implementation hiện tại, chưa được rà soát pháp lý; chủ dự án cần bổ sung địa chỉ email hỗ trợ trực tiếp khi chốt, xác nhận quy trình xóa tài khoản và retention trước phát hành rộng rãi.

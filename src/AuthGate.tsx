@@ -30,7 +30,7 @@ function LoginScreen({ gate, retry }: { gate: Exclude<Gate, {type:'ready'}>; ret
         {gate.type==='error'?<button className="button primary auth-google" onClick={retry}>Thử kết nối lại</button>:<form method="POST" action="/api/auth/login"><button className="button auth-google" type="submit"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 48 48"><path fill="#4285f4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.7c3.9-3.6 6-8.8 6-15z"/><path fill="#34a853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.7-5.1c-1.8 1.2-4.1 1.9-6.8 1.9-5.3 0-9.8-3.6-11.4-8.4H5.7v5.2A20 20 0 0 0 24 44z"/><path fill="#fbbc05" d="M12.6 27.5a12 12 0 0 1 0-7.6v-5.2H5.7a20 20 0 0 0 0 18z"/><path fill="#ea4335" d="M24 12.1c3 0 5.7 1 7.8 3l5.8-5.7A19.2 19.2 0 0 0 24 4 20 20 0 0 0 5.7 14.7l6.9 5.2c1.6-4.8 6.1-7.8 11.4-7.8z"/></svg>Tiếp tục với Google</button></form>}
       </>}
       <p className="auth-privacy">KySheet lưu email, hồ sơ, mẫu và cấu hình đã lưu trong tài khoản. Tên cột và giá trị bộ lọc có thể chứa thông tin nhạy cảm. Không lưu mật khẩu Google hoặc workbook trên server.</p>
-    </div><footer>KySheet · Private report workspace</footer></section>
+    </div><footer>KySheet · Private report workspace<nav className="public-links" aria-label="Thông tin KySheet"><a href="/about/" target="_blank" rel="noopener noreferrer">Giới thiệu</a><a href="/privacy/" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/terms/" target="_blank" rel="noopener noreferrer">Điều khoản</a></nav></footer></section>
   </main>;
 }
 

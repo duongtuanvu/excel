@@ -288,7 +288,8 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 - [ ] 13.03 Chạy UAT với người dùng kế toán/vận hành: đo thời gian thiết kế và thay file kỳ tiếp theo, lỗi đối soát, tỷ lệ hoàn thành.
 - [ ] 13.04 Kiểm tra browser compatibility, regression, security, accessibility và deployment smoke.
 - [ ] 13.05 Release version/changelog, Git tag, rollback, danh sách known issues và support.
-- [ ] 13.06 Chính sách riêng tư, data retention, điều khoản và license trước khi phát hành công khai rộng rãi.
+- [x] 13.06a Source trang public Privacy Policy, Terms of Service, About và liên kết từ login/workspace.
+- [ ] 13.06b Xác minh HTTP 200 và nội dung trên production, Google Branding/publish, email liên hệ trực tiếp, quy trình xóa tài khoản, retention, rà soát pháp lý và license.
 - [ ] 13.07 Định lượng lợi ích automation và thu phản hồi; ưu tiên backlog theo nhu cầu thay vì số lượng chart.
 
 ## 5. Thứ tự triển khai đề xuất
@@ -330,3 +331,7 @@ Một tính năng mới chỉ được tick implementation khi có code tích h�
 - [ ] Cập nhật README/changelog/plan, commit SHA và kết quả nghiệm thu.
 
 Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đại diện cho tiến độ của một tính năng riêng.
+
+### Cập nhật trang public
+
+- Auth đã merge main theo yêu cầu chủ dự án (fbef146). Bổ sung HTML tĩnh Privacy/Terms/About; không phụ thuộc OAuth hoặc D1. Chưa xác nhận production deploy, OAuth publish hay kiểm thử E2E.
