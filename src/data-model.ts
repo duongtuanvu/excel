@@ -7,13 +7,18 @@ export const MODEL_OPERATIONS=['inner','left','right','full','union','union-all'
 export type ModelOperation=typeof MODEL_OPERATIONS[number];
 export type ModelPair={left:string;right:string};
 export type ModelInput={leftId:string;leftRevision:number;rightId:string;rightRevision:number;operation:ModelOperation;alias:string;pairs:ModelPair[]};
-export type ModelOrigin={operation:ModelOperation;leftId:string;leftRevision:number;rightId:string;rightRevision:number};
+export type ModelOrigin={operation:ModelOperation|'pipeline';leftId:string;leftRevision:number;rightId:string;rightRevision:number};
 export type ModelStats={matchedPairs:number;matchedLeft:number;matchedRight:number;unmatchedLeft:number;unmatchedRight:number;leftDuplicateKeys:number;rightDuplicateKeys:number;manyToManyKeys:number;cardinality:'none'|'1:1'|'1:N'|'N:1'|'N:N';expansion:boolean};
 export type ModelPreview={rows:number;columns:Column[];chars:number;stats:ModelStats|null;removedDuplicates:number|null};
 export const MODEL_LABELS:Record<ModelOperation,string>={inner:'INNER JOIN',left:'LEFT JOIN',right:'RIGHT JOIN',full:'FULL OUTER JOIN',union:'UNION', 'union-all':'UNION ALL'};
 export const isUnion=(op:ModelOperation)=>op==='union'||op==='union-all';
-export function modelStale(origin:ModelOrigin,sources:readonly Pick<ManagedSource,'id'|'revision'>[]):boolean{
- return !sources.some(s=>s.id===origin.leftId&&s.revision===origin.leftRevision)||!sources.some(s=>s.id===origin.rightId&&s.revision===origin.rightRevision);
+export function modelStale(origin:ModelOrigin,sources:readonly (Pick<ManagedSource,'id'|'revision'>&Partial<Pick<ManagedSource,'derived'>>)[],path=new Set<string>()):boolean{
+ const check=(id:string,revision:number):boolean=>{
+   const s=sources.find(x=>x.id===id&&x.revision===revision);
+   if(!s||path.has(id))return true;
+   return !!s.derived&&modelStale(s.derived,sources,new Set([...path,id]));
+ };
+ return check(origin.leftId,origin.leftRevision)||check(origin.rightId,origin.rightRevision);
 }
 export function defaultPairs(left:ManagedSource,right:ManagedSource,operation:ModelOperation):ModelPair[]{
  if(isUnion(operation))return left.columns.map(c=>({left:c.id,right:right.columns.find(r=>r.name===c.name&&r.kind===c.kind)?.id??''}));

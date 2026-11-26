@@ -18,6 +18,8 @@ import { validateBatchFiles,checkBatchPeak,batchStage,swapBatchTables } from './
 import type { BatchFile,BatchPreview,BatchItemPreview } from './batch-model';
 import {compileModel,readModelStats,joinRows,checkModelSize,modelSizeSql,modelCount,modelStale,isUnion} from './data-model';
 import type {ModelInput,ModelPreview} from './data-model';
+import {compileStep,validateRecipe,PIPELINE_LIMITS,STEP_LABELS} from './pipeline-model';
+import type {PipelineInput,PipelinePreview,PipelineStage} from './pipeline-model';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
@@ -453,6 +455,67 @@ async function createModel(input:ModelInput&{confirmExpansion:boolean}):Promise<
  }
  sources.set(id,{source:managed,chars:preview.chars});activeId=id;return workspace();
 }
+async function runPipeline(input:PipelineInput,apply:boolean):Promise<PipelinePreview|Workspace>{
+ const original=readable(input.sourceId,input.revision).source;
+ if(original.demo||original.derived?.operation==='pipeline')throw new Error('PIPELINE_SOURCE_INVALID: Chọn nguồn thật hoặc bảng JOIN/UNION còn hiệu lực.');
+ if(typeof input.alias!=='string')throw new Error('PIPELINE_INVALID: Tên bảng kết quả không hợp lệ.');
+ const recipe=validateRecipe(input.recipe),alias=normalizeAlias(input.alias,Array.from(sources.values(),e=>e.source.alias));
+ if(!recipe.steps.some(s=>s.enabled))throw new Error('PIPELINE_EMPTY: Cần bật ít nhất một bước.');
+ const {conn}=await connect(),stages:PipelineStage[]=[];
+ const originalTables=Array.from(sources.values(),tableBudget),budgets=Array.from(books.values(),b=>b.budget);
+ let table=sourceTable(original.id),columns=original.columns,rows=original.rows,chars=0;
+ let stageBudget:{rows:number;columns:Column[];chars:number}|null=null;
+ const temporary=['pipeline_stage_a','pipeline_stage_b'];
+ let output:string|null=null,stepIndex=-1;
+ try{
+   for(const name of temporary)await conn.query('DROP TABLE IF EXISTS '+name);
+   for(let i=0;i<recipe.steps.length;i++){
+     stepIndex=i;
+     const step=recipe.steps[i],before=rows;
+     if(step.enabled){
+       const compiled=compileStep(step,columns,table);
+       if(compiled.guard){
+         const count=modelCount((await conn.query(compiled.guard)).get(0)?.n,rows);
+         if(count)throw new Error((step.type==='replace'?'PIPELINE_TEXT_LIMIT':'PIPELINE_CONVERSION_FAILED')+': Bước '+(i+1)+' có '+count+' ô không hợp lệ.');
+       }
+       const size=(await conn.query(modelSizeSql(compiled.sql,compiled.columns))).get(0);
+       const nextRows=modelCount(size?.n,rows),nextChars=modelCount(size?.chars,Number.MAX_SAFE_INTEGER);
+       checkModelSize(nextRows,compiled.columns.length);
+       const nextBudget={rows:nextRows,columns:compiled.columns,chars:nextChars};
+       checkWorkspaceBudget(budgets,[...originalTables,nextBudget]);
+       checkBatchPeak(budgets,[...originalTables,...(stageBudget?[stageBudget]:[]),nextBudget]);
+       const next=table===temporary[0]?temporary[1]:temporary[0];
+       await conn.query('CREATE TABLE '+next+' AS '+compiled.sql);
+       const actual=(await conn.query('SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM '+next)).get(0)?.n;
+       if(modelCount(actual,rows)!==nextRows)throw new Error('PIPELINE_ROW_MISMATCH: Số dòng không khớp tại bước '+(i+1)+'.');
+       if(temporary.includes(table))await conn.query('DROP TABLE '+table);
+       table=next;columns=compiled.columns;rows=nextRows;chars=nextChars;stageBudget=nextBudget;
+     }
+     if(!apply){
+       const visible=columns.slice(0,PIPELINE_LIMITS.sampleColumns);
+       const projection=visible.map(c=>{if(!/^c(?:0|[1-9][0-9]?)$/.test(c.id))throw new Error('PIPELINE_SCHEMA_INVALID');const q='"'+c.id+'"';return "CASE WHEN "+q+" IS NULL THEN '(NULL)' WHEN length("+q+")>"+PIPELINE_LIMITS.sampleLength+" THEN left("+q+","+PIPELINE_LIMITS.sampleLength+") || '…' ELSE "+q+" END AS "+q;}).join(', ');
+       const sampleResult=await conn.query('SELECT '+projection+' FROM '+table+' LIMIT '+PIPELINE_LIMITS.sampleRows);
+       const sample=Array.from(sampleResult,r=>visible.map(c=>String(r?.[c.id]??'(NULL)')));
+       stages.push({index:i,label:STEP_LABELS[step.type],enabled:step.enabled,before,rows,columns:columns.map(c=>({...c})),sample});
+     }
+   }
+   if(!apply)return {rows,columns,stages};
+   if(!stageBudget||!temporary.includes(table))throw new Error('PIPELINE_EMPTY: Không có kết quả.');
+   const id='s'+(++nextSource),target=sourceTable(id);
+   const managed:ManagedSource={id,slotId:crypto.randomUUID(),alias,bookId:'',revision:1,demo:false,name:alias,sheet:'Pipeline',sheets:[],rows,columns,derived:{operation:'pipeline',leftId:original.id,leftRevision:original.revision,rightId:original.id,rightRevision:original.revision},stale:false};
+   // Publish only after the entire recipe succeeded. ALTER is a single atomic DDL.
+   output=target;
+   await conn.query('ALTER TABLE '+table+' RENAME TO '+target);
+   sources.set(id,{source:managed,chars});activeId=id;output=null;
+   return workspace();
+ }catch(e){
+   if(output)await conn.query('DROP TABLE IF EXISTS '+output).catch(()=>{engineUnsafe=true;});
+   if(e instanceof Error&&/^(PIPELINE|MODEL|SOURCE|WORKBOOK|BATCH)_[A-Z_]+:/.test(e.message))throw e;
+   throw new Error('PIPELINE_STEP_FAILED: Không thể thực thi bước '+(stepIndex+1)+'. Nguồn gốc không thay đổi.');
+ }finally{
+   for(const name of temporary)try{await conn.query('DROP TABLE IF EXISTS '+name);}catch{engineUnsafe=true;}
+ }
+}
 async function handle(req: Request):Promise<unknown>{
   if(engineUnsafe)throw new Error('ENGINE_RECOVERY_REQUIRED: Hãy tải lại trang vì không xác nhận được trạng thái transaction.');
   switch(req.type){
@@ -503,6 +566,8 @@ async function handle(req: Request):Promise<unknown>{
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
     }
+    case 'previewPipeline':return runPipeline(req.input,false);
+    case 'createPipeline':return runPipeline(req.input,true);
     case 'previewModel':return (await inspectModel(req.input)).preview;
     case 'createModel':return createModel(req.input);
     case 'previewBatch':return planBatch(req.input.files,false).preview;

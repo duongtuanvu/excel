@@ -147,3 +147,21 @@ test('schema-capable clients save rules; old clients cannot erase them',async()=
  assert.equal((await save(1,defaultSettings('Reset'),true)).status,200);
  }finally{f.close();}
 });
+
+
+test('pipeline recipes stay isolated and old clients cannot erase them',async()=>{
+ const f=fixture();try{
+ const a=await f.user('a'),b=await f.user('b'),settings=defaultSettings('A');
+ settings.pipelines=[{version:1,name:'Clean',steps:[{type:'trim',enabled:true,column:'Region',value:'',replacement:'',operator:'eq',target:'text'}]}];
+ const put=(revision:number,value:unknown,capable:boolean)=>f.request('/api/settings',{method:'PUT',headers:{Cookie:a,Origin:origin,'Content-Type':'application/json','X-KySheet-User':'a',...(capable?{'X-KySheet-Pipeline':'1'}:{})},body:JSON.stringify({revision,settings:value})});
+ const get=async(cookie:string)=>(await (await f.request('/api/session',{headers:{Cookie:cookie}})).json()).settings;
+ assert.equal((await put(0,{...settings,pipelines:[{...settings.pipelines[0],sample:['SECRET']}]},true)).status,200);
+ assert.deepEqual((await get(a)).pipelines,settings.pipelines);
+ assert.equal((await get(b)).pipelines,undefined);
+ const denied=await put(1,defaultSettings('Old'),false);
+ assert.equal(denied.status,409);assert.equal((await denied.json()).code,'SETTINGS_CLIENT_UPGRADE');
+ assert.deepEqual((await get(a)).pipelines,settings.pipelines);
+ assert.equal((await put(1,defaultSettings('Reset'),true)).status,200);
+ assert.equal((await get(a)).pipelines,undefined);
+ }finally{f.close();}
+});
