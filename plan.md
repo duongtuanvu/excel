@@ -1,0 +1,321 @@
+# KySheet — Product & Engineering Plan
+
+> Thiết kế một lần, báo cáo mọi kỳ.
+>
+> Repository: [duongtuanvu/excel](https://github.com/duongtuanvu/excel) · Branch: `main`
+>
+> Baseline: v0.3.0 · commit `f9c0dbc20e7204e9bd891ae288ab60daf18ea4ea` · cập nhật 2026-11-26.
+
+## 1. Mục tiêu và nguyên tắc
+
+KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hướng local-first, no-code. Người dùng thiết kế nguồn, luồng xử lý, chỉ số, báo cáo một lần; các kỳ tiếp theo chỉ thay file tương thích rồi chạy lại và xuất báo cáo.
+
+- Guest dùng đầy đủ các chức năng xử lý Excel cơ bản, không bắt buộc tạo tài khoản.
+- Workbook, dữ liệu nguồn, truy vấn và kết quả xử lý ở browser; không gửi lên backend mặc định.
+- Cloudflare Workers Builds + Static Assets là phương án deploy chính, không nhầm với Pages.
+- DuckDB-Wasm chạy trong bộ nhớ phía client; Web Worker giữ UI không bị khóa bởi tác vụ nặng.
+- Không cần database server cho báo cáo local. Auth/cloud sync là module tùy chọn, chỉ triển khai khi có nhu cầu và lựa chọn nhà cung cấp.
+- Không đánh đổi tính đúng đắn của số liệu để tăng tốc. Không âm thầm bỏ dòng, nhóm, công thức lỗi hoặc dữ liệu không khớp.
+- Ưu tiên desktop cho thao tác thiết kế; mobile phải xem, lọc, nhập/xuất báo cáo thuận tiện.
+
+## 2. Quy tắc checklist
+
+- `[x]`: đã có implementation trong source; với mục kiểm thử hoặc triển khai, phải có kết quả chạy thực tế.
+- `[ ]`: chưa có, chưa hoàn thiện, hoặc chưa xác minh.
+- Không suy diễn từ việc có source test rằng test đã pass. Mọi phase chỉ đóng khi checklist và tiêu chí nghiệm thu tương ứng đều đạt.
+- Sau mỗi commit tính năng: cập nhật đúng checklist, bằng chứng (commit, lệnh test, kết quả), giới hạn còn tồn tại và việc tiếp theo ngay trong file này.
+- Không ghi dữ liệu khách hàng, token, thông tin định danh hay bí mật vào plan hoặc fixture công khai.
+
+**Trạng thái baseline:** Source đã có trên GitHub. Chưa xác nhận cài dependency, TypeScript build, E2E hoặc deploy Cloudflare thành công. Không có commit status checks được trả về cho commit baseline tại thời điểm rà soát; điều đó không chứng minh build Cloudflare đã pass hay fail.
+
+## 3. Roadmap tổng quan
+
+| Phase | Module | Ưu tiên | Trạng thái |
+|---|---|---|---|
+| 00 | Build, deploy, QA baseline | P0 | Có nền tảng, chưa xác minh |
+| 01 | Core Report Engine v0.3 | P0 | Đã code; chờ nghiệm thu |
+| 02 | User Center local | P1 | Đã code; chờ nghiệm thu |
+| 03 | Data Sources & schema mapping | P0 | Một phần |
+| 04 | Data Model & Transformation Pipeline | P0 | Một phần |
+| 05 | Pivot & Measures Engine | P0 | Một phần |
+| 06 | Dashboard Designer & Widgets | P0 | Layout cố định |
+| 07 | Dynamic Filters & Report Viewer | P1 | Một phần |
+| 08 | Report Automation & Templates | P0 | Một phần |
+| 09 | Export & Sharing | P1 | Một phần |
+| 10 | Performance, PWA, Security & Accessibility | P1 | Một phần |
+| 11 | Auth, Cloud Sync & User Management | P2 | Chưa có, tùy chọn |
+| 12 | AI Report Builder | P3 | Chưa có, tùy chọn |
+| 13 | Release & Product Validation | P1 | Chưa nghiệm thu |
+
+P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm. P2/P3: mở rộng có điều kiện, không phải dependency của tính năng local.
+
+## 4. Checklist chi tiết
+
+### Phase 00 — Build, deploy, QA baseline (P0)
+
+- [x] 00.01 React + TypeScript + Vite project tại root repo.
+- [x] 00.02 Script dev, build, preview, test, test:e2e và build:local.
+- [x] 00.03 Cấu hình build WASM CDN và chế độ self-host.
+- [x] 00.04 Tài liệu Cloudflare Workers Builds cho repo excel, branch main.
+- [x] 00.05 Source unit test model (6 test), user-model (4 test) và Playwright E2E (2 kịch bản).
+- [ ] 00.06 Cài dependency bằng Bun/npm trên Node tương thích; xác minh phiên bản/package URL tồn tại, tạo và commit một lockfile; dùng frozen install trong CI.
+- [ ] 00.07 Chạy TypeScript check và production build; xử lý tất cả lỗi dependency, type, asset và worker bundling.
+- [ ] 00.08 Chạy unit test và E2E hiện có; sửa lỗi và bổ sung fixture hồi quy nếu phát hiện.
+- [ ] 00.09 Chuẩn hóa Wrangler: pin phiên bản, cấu hình Static Assets ./dist, SPA fallback khi cần; tên Worker phải khớp môi trường thực tế, không hardcode tên chưa xác nhận.
+- [ ] 00.10 Kiểm tra kích thước từng asset theo giới hạn Workers; xác minh WASM, MIME, CORS, cache và URL worker sau deploy.
+- [ ] 00.11 Deploy từ duongtuanvu/excel:main; smoke test URL thật, demo/import/filter/export/User Center, cả reload.
+- [ ] 00.12 CI cho typecheck, unit test, build, E2E và secret/dependency scan; hướng dẫn rollback theo commit/release.
+
+**Nghiệm thu:** clean install, test, build và smoke test trên URL deploy thành công; lưu bằng chứng. Không bắt đầu mở rộng engine lớn trước khi baseline ổn định.
+
+### Phase 01 — Core Report Engine v0.3 (P0)
+
+- [x] 01.01 SheetJS import XLSX/XLS/CSV/TSV; chọn sheet trong một workbook.
+- [x] 01.02 Chuẩn hóa header trống/trùng; suy luận kiểu number, text, date, boolean.
+- [x] 01.03 DuckDB-Wasm in-memory, Web Worker, typed request/response, hàng đợi tác vụ.
+- [x] 01.04 Staging table, kiểm tra số dòng/schema và thay bảng trong transaction.
+- [x] 01.05 Group by tối đa 3 cấp, một metric; SUM, COUNT, AVG, MIN, MAX, COUNT DISTINCT.
+- [x] 01.06 Filter chứa/bằng/khác/so sánh số/trống; tối đa 12 điều kiện AND.
+- [x] 01.07 KPI, biểu đồ thanh/cột, sắp xếp kết quả và bảng dữ liệu phân trang.
+- [x] 01.08 Debounce, giới hạn import/nhóm, chặn export kết quả bị cắt.
+- [x] 01.09 Demo data, thông báo lỗi và xử lý trạng thái tải.
+- [x] 01.10 UI responsive cơ bản, cấu hình báo cáo trực tiếp.
+- [ ] 01.11 Xác minh kết quả tổng hợp với fixture độc lập: null, zero, số âm, số lớn, nhóm trống, distinct, trung bình có trọng số theo dữ liệu gốc.
+- [ ] 01.12 Xác minh CSV đa dòng/quote, nhiều sheet, unicode, mã số 0 đầu và export đọc lại.
+- [ ] 01.13 Xử lý lỗi khởi tạo DuckDB, timeout, retry/restart worker và thay file không làm mất nguồn tốt trước đó.
+
+**Nghiệm thu:** dữ liệu đầu vào và kết quả đối chiếu đúng; không treo UI, không hiển thị hoặc xuất kết quả của cấu hình cũ.
+
+### Phase 02 — User Center local (P1)
+
+- [x] 02.01 Thương hiệu KySheet, logo, favicon, avatar theo tên.
+- [x] 02.02 Hồ sơ local: tên hiển thị, tên workspace, mật độ bảng.
+- [x] 02.03 Thư viện tối đa 20 mẫu trên LocalStorage.
+- [x] 02.04 Lưu cấu hình hiện tại, áp dụng mẫu, tải JSON, xác nhận xóa mẫu.
+- [x] 02.05 Kiểm tra schema mẫu, phiên bản, kích thước và dữ liệu local không hợp lệ.
+- [x] 02.06 Cảnh báo storage bị chặn; thông tin quyền riêng tư; đặt lại hồ sơ/mẫu có xác nhận.
+- [ ] 02.07 Tìm kiếm, đổi tên, nhân bản, phân loại/tag và sắp xếp mẫu.
+- [ ] 02.08 Recent reports (metadata tùy chọn), favorites, trạng thái mẫu chưa lưu.
+- [ ] 02.09 Backup/restore toàn bộ hồ sơ và thư viện mẫu; xác nhận khi ghi đè.
+- [ ] 02.10 Xử lý xung đột nhiều tab; không vô tình ghi đè mẫu của tab khác.
+- [ ] 02.11 E2E lưu/reload/áp dụng/xóa, lỗi quota, reset và keyboard focus; kiểm tra mobile.
+
+**Nghiệm thu:** hoạt động không tài khoản, không lưu workbook; người dùng biết rõ hồ sơ local không phải cơ chế xác thực hoặc cách ly user.
+
+### Phase 03 — Data Sources & schema mapping (P0)
+
+- [x] 03.01 Import một workbook đang hoạt động, danh sách sheet, tên file và số dòng/cột.
+- [x] 03.02 Phát hiện cột tương thích khi đổi file và áp dụng cấu hình JSON theo tên.
+- [ ] 03.03 Quản lý nhiều file đồng thời: source ID ổn định, alias, sheet/table riêng; thêm/xóa/đổi tên.
+- [ ] 03.04 Import nhiều sheet từ một workbook; CSV/TSV encoding, delimiter, preview có xác nhận.
+- [ ] 03.05 Chọn hàng header, vùng dữ liệu, bỏ dòng tiêu đề phụ và dòng tổng; hỗ trợ merge-cell có quy tắc rõ.
+- [ ] 03.06 Schema editor: đổi tên, kiểu cột, định dạng ngày/số theo locale vi-VN; giữ mã định danh/leading zeros.
+- [ ] 03.07 Mapping tên cột cũ/mới, phát hiện thiếu/thừa/sai kiểu, xem diff trước khi thay nguồn.
+- [ ] 03.08 Data profiling: null, distinct, duplicate, min/max, phân bố và tỷ lệ lỗi parse.
+- [ ] 03.09 Thay từng source, batch refresh nhiều source, báo trạng thái và khả năng rollback nếu lỗi.
+- [ ] 03.10 Fixture nhiều nguồn, header bất thường, file lỗi/empty, mapping sai và thay file tương thích.
+
+**Nghiệm thu:** hai file và nhiều sheet có thể tồn tại độc lập; thay file không làm mất mapping hay thay đổi các bảng không liên quan; không silently truncate dữ liệu.
+
+### Phase 04 — Data Model & Visual Transformation Pipeline (P0)
+
+Phụ thuộc: Phase 03.
+
+- [x] 04.01 Lọc, tổng hợp và sắp xếp báo cáo bằng SQL được sinh từ cấu hình.
+- [ ] 04.02 Mô hình nhiều bảng, sơ đồ quan hệ, khóa chính/khóa ngoại logic, kiểm tra kiểu khóa.
+- [ ] 04.03 JOIN inner/left/right/full, composite key, xem cardinality 1:1/1:N/N:1/N:N, cảnh báo many-to-many nhân bản số liệu.
+- [ ] 04.04 UNION/append nhiều bảng, map cột khác tên; phát hiện schema mismatch.
+- [ ] 04.05 Transform chọn/xóa/đổi tên cột, cast type, trim/replace, split/merge, deduplicate, sort.
+- [ ] 04.06 Xử lý null/missing value và lỗi chuyển kiểu với quy tắc có thể cấu hình; không tự thay null bằng 0.
+- [ ] 04.07 Filter và group-by trong pipeline, unpivot dữ liệu rộng sang dài.
+- [ ] 04.08 Visual DAG: source → transform → join → output; node/edge validation, chặn cycle.
+- [ ] 04.09 Preview từng step, row count trước/sau, số bản ghi unmatched và trace nguồn gốc.
+- [ ] 04.10 Undo/redo, enable/disable/reorder step; lưu pipeline dưới JSON có version.
+- [ ] 04.11 Tái chạy theo dependency, cache/invalidate đúng node, xử lý giao dịch khi một step thất bại.
+- [ ] 04.12 Test JOIN trùng khóa/null/khác kiểu, UNION khác schema, DAG cycle, và kết quả không nhân đôi ngoài chủ đích.
+
+**Nghiệm thu:** quy trình từ Doanh thu.xlsx + Danh mục.xlsx tới bảng đã xử lý có thể thiết kế trực quan, lưu và chạy lại trên dữ liệu kỳ mới.
+
+### Phase 05 — Pivot & Measures Engine (P0)
+
+Phụ thuộc: Phase 03–04 cho báo cáo nhiều nguồn.
+
+- [x] 05.01 Bảng tổng hợp group-by hàng nhiều cấp, một metric, 6 phép tổng hợp.
+- [x] 05.02 Tổng hợp toàn bộ theo dữ liệu lọc, không chỉ cộng các giá trị hiển thị.
+- [ ] 05.03 Pivot thực sự với Rows / Columns / Values / Filters; kéo thả và đổi thứ tự field.
+- [ ] 05.04 Nhiều measures cùng lúc, alias, format tiền tệ/số/phần trăm/ngày.
+- [ ] 05.05 Subtotal nhiều cấp, Grand Total đúng ngữ nghĩa AVG/DISTINCT/ratio; expand/collapse.
+- [ ] 05.06 % of row/column/grand total, top N, sort theo measure và nhóm.
+- [ ] 05.07 Drill-down từ một ô/nhóm tới dòng dữ liệu nguồn, vẫn giữ filter.
+- [ ] 05.08 Calculated columns và measures phân biệt row-level/aggregate; expression AST, whitelist hàm, kiểm tra kiểu, dependency/cycle, không eval JS hay chạy SQL tùy ý.
+- [ ] 05.09 Hàm số, text, date, IF/CASE, COALESCE, phép tính lợi nhuận và tỷ lệ; quy tắc chia 0/null.
+- [ ] 05.10 Time intelligence: MoM, QoQ, YoY, MTD, YTD, lũy kế, rank; calendar và kỳ báo cáo cấu hình được.
+- [ ] 05.11 DECIMAL cho tiền và chính xác theo yêu cầu nghiệp vụ; hiển thị rounding rõ ràng.
+- [ ] 05.12 Virtualization/pagination cho ma trận lớn, chặn cardinality quá cao và xuất không thiếu dữ liệu.
+- [ ] 05.13 Test độc lập với expected output hoặc đối chiếu Excel; bao gồm subtotal không cộng được, ratio, date edge case, mã null và decimal.
+
+**Nghiệm thu:** pivot nhiều chiều và nhiều chỉ số cho ra kết quả đối chiếu đúng, kể cả số liệu tài chính. Không coi group-by hiện tại là pivot đầy đủ.
+
+### Phase 06 — Dashboard Designer & Widget Library (P0)
+
+Phụ thuộc: Phase 05 cho measures nâng cao.
+
+- [x] 06.01 Layout dashboard cố định: KPI, bar ngang, bar dọc, summary/raw table.
+- [ ] 06.02 Workspace điều hướng Data Sources / Data Model / Measures / Designer / Viewer.
+- [ ] 06.03 Report Designer dạng canvas/grid: thêm, xóa, kéo thả, resize, duplicate, snap, lock widget.
+- [ ] 06.04 Nhiều widget và nhiều trang; widget ID ổn định, nguồn và measure riêng.
+- [ ] 06.05 Inspector cấu hình field, dimension, metric, sort, format, màu sắc, title và legend.
+- [ ] 06.06 Bộ widget cốt lõi: KPI, table, pivot, bar, column, line, area, pie/donut, combo, text.
+- [ ] 06.07 Bộ widget mở rộng: scatter, gauge/progress, heatmap, treemap, waterfall, funnel; chọn theo nhu cầu.
+- [ ] 06.08 Theme, typography, conditional formatting, palette, format số và nhãn.
+- [ ] 06.09 Undo/redo thao tác thiết kế, autosave metadata theo lựa chọn, warning khi đóng thay đổi chưa lưu.
+- [ ] 06.10 Layout responsive theo breakpoint; edit/view/presentation mode, keyboard và touch.
+- [ ] 06.11 Lưu/khôi phục layout JSON; phiên bản hóa và migrate template.
+- [ ] 06.12 Hạn chế số widget/query đồng thời; cache chung, hủy query cũ, xử lý error/empty/loading theo từng widget.
+
+**Nghiệm thu:** tạo dashboard nhiều widget và trang mà không sửa code, mở lại template vẫn đúng vị trí/cấu hình, tương tác không làm nghẽn UI.
+
+### Phase 07 — Dynamic Filters & Report Viewer (P1)
+
+- [x] 07.01 Filter AND của báo cáo hiện tại và cập nhật tự động có debounce.
+- [ ] 07.02 Filter UI dropdown, multi-select, checkbox/radio, search, range, date picker/date range.
+- [ ] 07.03 Nhóm điều kiện AND/OR, NOT và toán tử theo kiểu dữ liệu; rõ ngữ nghĩa null.
+- [ ] 07.04 Global/page/widget filter, scope và precedence minh bạch.
+- [ ] 07.05 Cross-filter từ chart, click-to-drill-down, breadcrumb và reset.
+- [ ] 07.06 Dynamic options theo dữ liệu; top N, relative period và so sánh kỳ.
+- [ ] 07.07 Viewer chỉ đọc layout, presentation/fullscreen, filter chips, chế độ mobile.
+- [ ] 07.08 Test giao nhau của filter, reset, cross-filter vòng lặp, stale result và widget scope.
+
+**Nghiệm thu:** chọn khu vực/kỳ báo cáo cập nhật đúng các widget liên quan, không ảnh hưởng widget ngoài scope.
+
+### Phase 08 — Report Automation & Templates (P0)
+
+- [x] 08.01 Template JSON v1 chứa cấu hình hiện tại và bộ lọc; validate schema.
+- [x] 08.02 Import/export mẫu JSON; tái áp dụng khi cột tương thích.
+- [x] 08.03 Thư viện mẫu local trong User Center.
+- [ ] 08.04 Project/template schema v2 gồm source slots, mapping, pipeline, measures, pages, widget và filter; migrate v1 không mất cấu hình.
+- [ ] 08.05 Wizard thay dữ liệu định kỳ, đặt kỳ báo cáo, chọn nhiều file và rerun pipeline.
+- [ ] 08.06 Preflight kiểm tra schema/kiểu/khóa/row count; so sánh kỳ trước với kỳ hiện tại nếu người dùng cung cấp.
+- [ ] 08.07 Validation nghiệp vụ cấu hình được: tổng đối soát, ngưỡng sai lệch, dữ liệu thiếu/trùng, tỷ lệ unmatched.
+- [ ] 08.08 Preview thay đổi trước khi publish/export; nhật ký bước chạy, cảnh báo lỗi và tóm tắt.
+- [ ] 08.09 Thư viện template mẫu cho bán hàng, kế toán, vận hành, nhân sự, kho, sản xuất; fixture tổng hợp không chứa dữ liệu thật.
+- [ ] 08.10 Version history, duplicate/restore, backup project JSON; ZIP tùy chọn khi user đồng ý đóng gói dữ liệu.
+- [ ] 08.11 Workflow xuất nhiều báo cáo liên tiếp, tiến độ/cancel, tên file theo kỳ và manifest kết quả.
+
+**Nghiệm thu:** từ template đã thiết kế, người dùng chỉ chọn các file kỳ mới, xác nhận mapping/validation rồi nhận báo cáo đúng mà không thiết kế lại.
+
+### Phase 09 — Export & Sharing (P1)
+
+- [x] 09.01 XLSX: 3 sheet Tổng quan, Tổng hợp, Dữ liệu đã lọc.
+- [x] 09.02 CSV tổng hợp, escape quote và trung hòa text có nguy cơ formula injection.
+- [x] 09.03 JSON cấu hình mẫu, giới hạn và chặn export nhóm bị cắt.
+- [ ] 09.04 XLSX nâng cao: nhiều pivot/measure, style, number format, column width, freeze panes, filter, subtotal; không ghi công thức ngoài ý muốn.
+- [ ] 09.05 Export có tùy chọn dữ liệu nguồn/summary, loại trừ cột nhạy cảm, chọn trang, chỉ xuất dữ liệu lọc đúng.
+- [ ] 09.06 PDF in ấn, A4/landscape, pagination, header/footer; không cắt widget hoặc dòng.
+- [ ] 09.07 PNG/SVG cho chart hoặc dashboard; PowerPoint ở mức mở rộng.
+- [ ] 09.08 HTML tương tác độc lập, offline, chỉ nhúng dữ liệu đã chọn, CSP phù hợp và escape an toàn; xem kích thước trước xuất.
+- [ ] 09.09 ZIP project/template + tài nguyên/dữ liệu theo lựa chọn; kiểm tra khi import.
+- [ ] 09.10 Chia sẻ online tùy chọn phụ thuộc Phase 11; không tự upload workbook; có consent, quyền truy cập, thu hồi link.
+- [ ] 09.11 Đối chiếu số liệu từng định dạng, unicode, file lớn, cancel và lỗi hết bộ nhớ.
+
+**Nghiệm thu:** file mở được bằng ứng dụng mục tiêu, đúng số liệu/bộ lọc/định dạng và không làm lộ dữ liệu ngoài phạm vi user chọn.
+
+### Phase 10 — Performance, PWA, Security & Accessibility (P1)
+
+Thực hiện xuyên suốt các phase, không đợi đến cuối.
+
+- [x] 10.01 Worker xử lý nền, serial queue, transfer ArrayBuffer khi import/export.
+- [x] 10.02 Giới hạn file 25 MB, 100.000 dòng, 100 cột, 1 triệu ô, 5.000 nhóm; 50 dòng/trang, biểu đồ tối đa 12 nhóm đầu.
+- [x] 10.03 SQL whitelist/quote, staging transaction, kiểm tra JSON và CSV injection cơ bản.
+- [ ] 10.04 Benchmark startup/import/query/export trên desktop, Android và iOS/Safari; ghi kích thước fixture, RAM, p50/p95, thời gian tải asset; không tuyên bố sức tải chưa đo.
+- [ ] 10.05 Lazy-load engine/widgets, giảm copy và số lần parse, batch/stream ingestion/export, profiling memory và release tài nguyên.
+- [ ] 10.06 Virtualized grid, query cache/invalidation, request coalescing, cancellation và backpressure.
+- [ ] 10.07 Guard workbook nén độc hại/zip bomb, số sheet, kích thước sau giải nén, giới hạn tổng tài nguyên; timeout và recovery rõ ràng.
+- [ ] 10.08 PWA manifest, service worker, cache phiên bản và offline sau lần tải đầy đủ; xử lý CDN unavailable/update/rollback.
+- [ ] 10.09 Đánh giá tự host WASM hoặc R2 khi cần; giữ dữ liệu phân tích local, phân biệt asset network request với upload dữ liệu.
+- [ ] 10.10 Security headers/CSP, kiểm tra XSS từ sheet/JSON/HTML, dependency audit, kiểm tra network không gửi workbook/SQL/kết quả.
+- [ ] 10.11 Accessibility: contrast, screen reader, focus management, keyboard/touch, reduced motion; kiểm tra mobile 320px trở lên.
+- [ ] 10.12 Smoke/load test static asset và đo cold/warm load, lỗi CDN/worker, network chậm; nếu thêm API mới đo request/CPU/DB riêng.
+- [ ] 10.13 Opt-in error reporting chỉ thu metadata cần thiết đã redact, không log nội dung Excel hoặc filter nhạy cảm.
+
+**Nghiệm thu:** có baseline benchmark tái lập được và ngưỡng release theo thiết bị đã thử; không khẳng định chạy được mọi file ở giới hạn hiện tại.
+
+### Phase 11 — Auth, Cloud Sync & User Management (P2, tùy chọn)
+
+Chỉ triển khai sau khi chốt nhu cầu tài khoản thật, provider và chi phí. Guest/local-first không bị phụ thuộc module này.
+
+- [x] 11.01 Có UI hồ sơ local và mô tả kiến trúc tài khoản tương lai trong README; chưa có auth thật.
+- [ ] 11.02 Chọn OAuth/OIDC provider, domain, session model, môi trường staging và chính sách dữ liệu.
+- [ ] 11.03 Đăng ký/đăng nhập/đăng xuất, Google hoặc provider được chọn, quản lý phiên an toàn; không tự xây password auth nếu không cần.
+- [ ] 11.04 Workers API cho hồ sơ và metadata/template có consent; D1 schema/migration, owner_id và index.
+- [ ] 11.05 Authorization server-side theo quyền sở hữu; tách role admin với entitlement gói Free/Pro, không tin role từ client.
+- [ ] 11.06 Đồng bộ mẫu đa thiết bị, version conflict, offline queue và retry; mặc định không upload workbook hoặc kết quả.
+- [ ] 11.07 Workspace/team, invitation, role owner/editor/viewer, quyền truy cập và thu hồi.
+- [ ] 11.08 Quản lý tài khoản, export dữ liệu, xóa tài khoản, session revocation và retention.
+- [ ] 11.09 Admin console, abuse/rate limit, audit log không chứa dữ liệu nguồn, quota và đo chi phí thực.
+- [ ] 11.10 Test CSRF, session, IDOR/tenant isolation, revoked access, race condition; load test API và database.
+- [ ] 11.11 Nếu thương mại hóa: billing/entitlements/webhook idempotency, grace period, điều khoản và chính sách riêng tư.
+
+**Nghiệm thu:** auth thật, cách ly user/workspace được kiểm tra, có audit và khả năng thu hồi quyền. Không mô phỏng bảo mật bằng local profile.
+
+### Phase 12 — AI Report Builder (P3, tùy chọn)
+
+Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
+
+- [ ] 12.01 Rule-based đề xuất báo cáo từ schema, không dùng AI.
+- [ ] 12.02 AI gợi ý metric, chart, pipeline hoặc template từ schema và yêu cầu user.
+- [ ] 12.03 Sinh cấu hình JSON có schema, validate type, dependency và permission trước khi áp dụng; preview và user xác nhận.
+- [ ] 12.04 AI hỏi đáp báo cáo và giải thích số liệu dựa trên kết quả local có thể truy vết.
+- [ ] 12.05 Chế độ privacy mặc định chỉ gửi metadata được duyệt; không tự gửi sample row/workbook, kiểm soát prompt injection từ ô dữ liệu.
+- [ ] 12.06 Provider abstraction, quota/cost, key management server-side nếu dùng dịch vụ bên ngoài; fallback khi AI lỗi.
+- [ ] 12.07 Test độ đúng số liệu, hallucination, cấu hình sai, chi phí và consent.
+
+**Nghiệm thu:** AI tạo được cấu hình có thể kiểm tra, không thay thế engine tính toán xác định và không tự ý gửi dữ liệu.
+
+### Phase 13 — Release & Product Validation (P1)
+
+- [ ] 13.01 Hướng dẫn sử dụng/onboarding, demo báo cáo thật với dữ liệu tổng hợp, tài liệu troubleshooting.
+- [ ] 13.02 Kiểm tra tên thương hiệu/nhãn hiệu/domain; KySheet hiện là tên làm việc.
+- [ ] 13.03 Chạy UAT với người dùng kế toán/vận hành: đo thời gian thiết kế và thay file kỳ tiếp theo, lỗi đối soát, tỷ lệ hoàn thành.
+- [ ] 13.04 Kiểm tra browser compatibility, regression, security, accessibility và deployment smoke.
+- [ ] 13.05 Release version/changelog, Git tag, rollback, danh sách known issues và support.
+- [ ] 13.06 Chính sách riêng tư, data retention, điều khoản và license trước khi phát hành công khai rộng rãi.
+- [ ] 13.07 Định lượng lợi ích automation và thu phản hồi; ưu tiên backlog theo nhu cầu thay vì số lượng chart.
+
+## 5. Thứ tự triển khai đề xuất
+
+| Mốc | Phạm vi | Điều kiện để chuyển tiếp |
+|---|---|---|
+| v0.3.x | Phase 00 + nghiệm thu 01/02 | Build/test/deploy chạy được |
+| v0.4 | Phase 03 + core Phase 04 | Multi-source, mapping, JOIN/transform đúng |
+| v0.5 | Phase 05 | Pivot nhiều chiều + measures đúng số liệu |
+| v0.6 | Phase 06/07 | Dashboard kéo thả và tương tác |
+| v0.7 | Phase 08/09 | Template định kỳ + xuất báo cáo đầy đủ |
+| v1.0 | Hoàn thiện P0/P1, Phase 10/13 | UAT, benchmark, bảo mật và release gates đạt |
+| Sau v1.0 | Phase 11/12 nếu cần | Có nhu cầu, kiến trúc và chi phí được chốt |
+
+Đây là thứ tự ưu tiên, không phải cam kết thời gian hoặc ngày release. Các việc security/QA/performance cần đi cùng từng phase.
+
+## 6. Bằng chứng và công việc tiếp theo
+
+| Ngày | Commit / tham chiếu | Bằng chứng | Trạng thái |
+|---|---|---|---|
+| 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
+| 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
+
+**Next action:** 00.06 → 00.12. Chốt cách build, kiểm thử và deploy trước; tiếp đó thiết kế contract cho nhiều nguồn và pipeline.
+
+**Known risks:** chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
+
+## 7. Definition of Done
+
+Một tính năng mới chỉ được tick implementation khi có code tích hợp, không phải mock hoặc TODO. Để đóng phase:
+
+- [ ] Các checklist bắt buộc của phase hoàn thành, hoặc scope loại trừ được ghi rõ.
+- [ ] Có unit/integration/E2E phù hợp; kết quả thực tế pass và fixture hồi quy.
+- [ ] Typecheck/build thành công; kiểm tra import/filter/export liên quan.
+- [ ] Không có lỗi bảo mật nghiêm trọng, mất hoặc sai số liệu; giới hạn hiển thị minh bạch.
+- [ ] Kiểm tra UI desktop/mobile, loading/error/empty state và performance liên quan.
+- [ ] Cập nhật README/changelog/plan, commit SHA và kết quả nghiệm thu.
+
+Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đại diện cho tiến độ của một tính năng riêng.
