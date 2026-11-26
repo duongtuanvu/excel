@@ -1,4 +1,7 @@
 import * as XLSX from 'xlsx';
+import {validateDashboard,dashboardSourceIds,DASHBOARD_LIMITS} from './dashboard-model';
+import type {WidgetData} from './dashboard-model';
+import {queryWidget} from './dashboard-engine';
 import {calculatePivot,drillPivot} from './pivot-engine';
 import {pivotMatrix,effectivePivotFormat} from './pivot-config';
 import * as duckdb from '@duckdb/duckdb-wasm';
@@ -487,7 +490,10 @@ async function rollbackPeriod(conn:duckdb.AsyncDuckDBConnection){
 async function runPeriod(input:Extract<Request,{type:'runPeriod'}>['input']):Promise<PeriodResult>{
   const saved=validateWorkspace(input.saved);
   if(!saved)throw new Error('PERIOD_NO_REPORT: Hãy lưu workspace trước khi chạy kỳ mới.');
-  const plan=periodPlan(saved,input.outputId);
+  const dashboard=input.dashboard===undefined?undefined:validateDashboard(input.dashboard);
+  const outputIds=dashboard?dashboardSourceIds(dashboard):[input.outputId];
+  if(!outputIds.length||outputIds[0]!==input.outputId)throw Error('DASHBOARD_SOURCE_MISSING: Chưa chọn nguồn dashboard.');
+  const plan=periodPlan(saved,input.outputId,outputIds.slice(1));
   const files=validatePeriodFiles(plan.slots,input.files);
   const nodes=[...plan.slots,...plan.models];
   const selected=new Set(nodes.map(n=>n.id));
@@ -560,13 +566,16 @@ async function runPeriod(input:Extract<Request,{type:'runPeriod'}>['input']):Pro
       built.set(model.id,source);
     }
     step=plan.output.alias;
+    if(dashboard){
+      for(const widget of dashboard.widgets){if(widget.type==='text')continue;step=widget.title;const target=built.get(widget.slotId);if(!target)throw Error('DASHBOARD_SOURCE_MISSING: Thiếu nguồn widget.');await queryWidget(widget,dashboard.filter,target.columns,sourceTable(target.id),sql=>conn.query(sql));}
+    }
     const checkedReport=await makeReport(plan.output.config,0,built.get(plan.output.id)!);
     if(checkedReport.pivotError)throw Error(checkedReport.pivotError);
     await conn.query('COMMIT');
   }catch(error){
     if(engineUnsafe)throw error;
     await rollbackPeriod(conn);
-    const detail=error instanceof Error&&/^(SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|MODEL|WORKSPACE|PIPELINE|PERIOD|BATCH|PIVOT)_/.test(error.message)
+    const detail=error instanceof Error&&/^(SOURCE|SCHEMA|LAYOUT|WORKBOOK|FILE|MODEL|WORKSPACE|PIPELINE|PERIOD|BATCH|PIVOT|DASHBOARD)_/.test(error.message)
       ?error.message:'Không thể đọc bảng hoặc tính báo cáo. Hãy kiểm tra file đã chọn.';
     throw new Error(step+' — '+detail);
   }
@@ -772,6 +781,26 @@ async function handle(req: Request):Promise<unknown>{
       const source=readable(req.input.sourceId,req.input.revision).source,{conn}=await connect();
       try{return await calculatePivot(req.input.config,source.columns,sourceTable(source.id),sql=>conn.query(sql));}
       catch(e){if(e instanceof Error&&e.message.startsWith('PIVOT_'))throw e;throw Error('PIVOT_QUERY_FAILED: Không thể tính ma trận.');}
+    }
+    case 'dashboard':{
+      const d=validateDashboard(req.input.dashboard),ids=dashboardSourceIds(d),bindings=req.input.bindings;
+      if(!Array.isArray(bindings)||bindings.length>WORKSPACE_LIMITS.sources||new Set(bindings.map(b=>b?.slotId)).size!==bindings.length||bindings.some(b=>!b||!ids.includes(b.slotId)||typeof b.sourceId!=='string'||!Number.isSafeInteger(b.revision)||b.revision<1))throw Error('DASHBOARD_BINDING_INVALID: Nguồn dashboard không hợp lệ.');
+      const map=new Map(bindings.map(b=>[b.slotId,b])),output:WidgetData[]=[],{conn}=await connect();
+      const cache=new Map<string,Extract<WidgetData,{status:'ready'}>>();
+      for(const widget of d.widgets){
+        if(widget.type==='text')continue;
+        try{
+          const bound=map.get(widget.slotId);
+          if(!bound)throw Error('DASHBOARD_SOURCE_MISSING: Chưa nạp nguồn dữ liệu. Hãy chạy kỳ mới hoặc mở nguồn.');
+          const target=readable(bound.sourceId,bound.revision).source;
+          if(target.slotId!==widget.slotId)throw Error('DASHBOARD_BINDING_INVALID: Mã nguồn không khớp.');
+          const key=JSON.stringify([target.id,target.revision,widget.type,widget.config,d.filter??null]);
+          let data=cache.get(key);
+          if(!data){data=await queryWidget(widget,d.filter,target.columns,sourceTable(target.id),sql=>conn.query(sql));cache.set(key,data);}
+          output.push({...data,id:widget.id});
+        }catch(e){output.push({id:widget.id,status:'error',error:e instanceof Error&&/^(DASHBOARD|PIVOT|SOURCE|MODEL)_/.test(e.message)?e.message:'DASHBOARD_QUERY_FAILED: Cấu hình hoặc dữ liệu không phù hợp.'});}
+      }
+      return output;
     }
     case 'report':return makeReport(req.input.config,req.input.page,readable(req.input.sourceId,req.input.revision).source);
     case 'export':return exportReport(req.input.config,req.input.format,readable(req.input.sourceId,req.input.revision).source);

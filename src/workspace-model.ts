@@ -57,7 +57,7 @@ export function validateSavedSource(input:unknown):SavedSource{
   const layout=validateLayout(s.layout);
   return {id,alias,sheet,columns,config,...(schema.length?{schema}:{}),...(layout?{layout}:{})};
 }
-export function validateWorkspace(input:unknown):SavedWorkspace|null{
+export function validateWorkspace(input:unknown,schemas?:Map<string,Column[]>):SavedWorkspace|null{
   if(input==null)return null; // Old account payloads are supported.
   const w=record(input);
   if(w.version!==1||!Array.isArray(w.slots)||!w.slots.length||w.slots.length>WORKSPACE_LIMITS.sources)throw new Error('WORKSPACE_INVALID: Workspace phải có 1–12 nguồn và version 1.');
@@ -109,6 +109,7 @@ export function validateWorkspace(input:unknown):SavedWorkspace|null{
   });
   const outputId=w.outputId===undefined?undefined:slotId(w.outputId);
   if(outputId&&!tables.has(outputId))throw new Error('WORKSPACE_OUTPUT_INVALID: Báo cáo đã chọn không tồn tại.');
+  if(schemas){schemas.clear();for(const [id,table] of tables)schemas.set(id,table.columns);}
   return {version:1,slots,...(models.length?{models}:{}),...(outputId?{outputId}:{})};
 }
 export function snapshotWorkspace(previous:SavedWorkspace|null, sources:readonly ManagedSource[], configFor:(source:ManagedSource)=>Config|undefined,activeSlotId?:string):SavedWorkspace{
@@ -141,11 +142,12 @@ export function withoutSavedSource(workspace:SavedWorkspace,id:string):SavedWork
   return slots.length?validateWorkspace({...workspace,slots,models:workspace.models?.filter(m=>m.id!==id),outputId:workspace.outputId===id?undefined:workspace.outputId}):null;
 }
 
-export function periodPlan(workspace:SavedWorkspace,outputId:string){
+export function periodPlan(workspace:SavedWorkspace,outputId:string,additionalOutputIds:readonly string[]=[]){
   const models=workspace.models??[];
   const output=[...workspace.slots,...models].find(s=>s.id===outputId);
   if(!output)throw new Error('WORKSPACE_OUTPUT_INVALID: Chọn báo cáo muốn chạy.');
-  const required=new Set([outputId]);
+  if(!Array.isArray(additionalOutputIds)||additionalOutputIds.length>WORKSPACE_LIMITS.sources||additionalOutputIds.some(id=>![...workspace.slots,...models].some(s=>s.id===id)))throw Error('WORKSPACE_OUTPUT_INVALID: Nguồn dashboard không tồn tại.');
+  const required=new Set([outputId,...additionalOutputIds]);
   for(const model of [...models].reverse()){
     if(required.has(model.id)){required.add(model.leftSlotId);if(model.operation!=='pipeline')required.add(model.rightSlotId);}
   }

@@ -478,3 +478,9 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Fixed-point BigInt Pivot aggregation, expressions, exact ranking/ratios/calendar, bounded batches and distinct sets, source validation and explicit rounding.
 - [x] Financial mode editor, exact string export and account capability gate. Other report KPIs and pipeline numeric transforms remain DOUBLE, numeric comparison filters blocked. High precision input requires text schema from original workbook.
 - [ ] CI/merge/production verification.
+
+### Dashboard Designer v0.8.0
+- [x] v0.7.3 CI 45801346351: 63 unit/integration + 25 Chromium E2E passed; main a322353 verified.
+- [x] Source dashboard model, bounded query worker, account validation and old-client capability gate; multi-output transactional period replay.
+- [x] Separate responsive Designer with KPI, charts, summary/Pivot/text, grid reorder/resize, theme/presentation, shared filter and saved dashboards.
+- [ ] CI / merge / production smoke test. Cross-filter, free-form drag resize, dashboard export and direct Pivot editor remain future work.

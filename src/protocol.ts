@@ -1,3 +1,4 @@
+import type {Dashboard,DashboardBinding,WidgetData} from './dashboard-model';
 import type { Config, Report } from './model';
 import type { Workspace } from './source-model';
 import type { SavedSource, SavedWorkspace } from './workspace-model';
@@ -19,7 +20,7 @@ export type Requests={
   removeSource:{input:{sourceId:string};output:Workspace};
   replaceSource:{input:SourceVersion&{name:string;bytes:ArrayBuffer};output:Workspace};
   restoreSource:{input:{slot:SavedSource;name:string;bytes:ArrayBuffer};output:Workspace};
-  runPeriod:{input:{saved:SavedWorkspace;outputId:string;files:PeriodFile[];confirmed:string[]};output:PeriodResult};
+  runPeriod:{input:{saved:SavedWorkspace;outputId:string;files:PeriodFile[];confirmed:string[];dashboard?:Dashboard};output:PeriodResult};
   previewPipeline:{input:PipelineInput;output:PipelinePreview};
   createPipeline:{input:PipelineInput;output:Workspace};
   previewModel:{input:ModelInput;output:ModelPreview};
@@ -37,6 +38,7 @@ export type Requests={
   distribution:{input:SourceVersion&{columnId:string};output:Distribution};
   drillPivot:{input:SourceVersion&{config:Config;row:PivotAxis;column:PivotAxis;page:number};output:PivotDrill};
   previewPivot:{input:SourceVersion&{config:Config};output:PivotResult};
+  dashboard:{input:{dashboard:Dashboard;bindings:DashboardBinding[]};output:WidgetData[]};
   report:{input:SourceVersion&{config:Config;page:number};output:Report};
   export:{input:SourceVersion&{config:Config;format:'xlsx'|'csv'};output:{bytes:ArrayBuffer;name:string;mime:string}};
 };

@@ -1,3 +1,6 @@
+import DashboardDesigner from './DashboardDesigner';
+import {dashboardSourceIds} from './dashboard-model';
+import type {Dashboard,WidgetData} from './dashboard-model';
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { EngineClient } from './worker-client';
@@ -121,6 +124,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   const fileInput = useRef<HTMLInputElement>(null), templateInput = useRef<HTMLInputElement>(null);
   const busyRef = useRef(false);
   const user = { data: session.settings, warning: '' };
+  const [dashboardOpen,setDashboardOpen]=useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [profiling, setProfiling] = useState(false);
   const restored = useRef(false);
@@ -348,14 +352,15 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       await saveSettings({...session.settings,workspace});
     },'Đã lưu workspace vào tài khoản.');
   }
-  const runPeriod:RunPeriod=async(outputId,selection,confirmed)=>{
+  const runPeriod:RunPeriod=(outputId,selection,confirmed)=>executePeriod(outputId,selection,confirmed);
+  async function executePeriod(outputId: string,selection:Parameters<RunPeriod>[1],confirmed:string[],dashboard?:Dashboard){
     const saved=session.settings.workspace;
     if(!saved)throw new Error('Hãy lưu workspace trước khi chạy kỳ mới.');
-    const plan=periodPlan(saved,outputId);
+    const plan=periodPlan(saved,outputId,dashboard?dashboardSourceIds(dashboard).slice(1):[]);
     return runProfile(async engine=>{
       const files=[];
       for(const item of selection)files.push({slotId:item.slotId,name:item.file.name,bytes:await item.file.arrayBuffer()});
-      const result=await engine.request('runPeriod',{saved,outputId,files,confirmed},files.map(f=>f.bytes));
+      const result=await engine.request('runPeriod',{saved,outputId,files,confirmed,...(dashboard?{dashboard}:{})},files.map(f=>f.bytes));
       if(result.status==='confirm')return result.warning;
       applyWorkspace(result.workspace,undefined,plan.output.config);
       const configs=new Map([...plan.slots,...plan.models].map(s=>[s.id,s.config]));
@@ -367,8 +372,27 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
       return null;
     });
   };
+  async function queryDashboard(dashboard:Dashboard):Promise<WidgetData[]>{
+    const ids=dashboardSourceIds(dashboard);
+    const bindings=sources.filter(s=>ids.includes(s.slotId)&&!s.stale).map(s=>({slotId:s.slotId,sourceId:s.id,revision:s.revision}));
+    return runProfile(e=>e.request('dashboard',{dashboard,bindings}));
+  }
+  async function saveDashboards(dashboards:Dashboard[]){
+    if(busyRef.current||saving||accountBusy)throw Error('DASHBOARD_BUSY: Bộ xử lý đang bận.');
+    setAccountBusy(true);
+    try{
+      const required=new Set(dashboards.flatMap(dashboardSourceIds));
+      if(sources.some(s=>required.has(s.slotId)&&s.demo))throw Error('DASHBOARD_DEMO: Hãy nhập file thật trước khi lưu Dashboard.');
+      const old=session.settings.workspace;
+      const oldIds=new Set([...(old?.slots??[]),...(old?.models??[])].map(s=>s.id));
+      const needsWorkspace=[...required].some(id=>!oldIds.has(id))||sources.some(s=>required.has(s.slotId)&&!s.stale&&!s.demo);
+      const workspace=needsWorkspace&&sources.some(s=>!s.demo&&!s.derived)?snapshotWorkspace(old,sources,s=>s.id===source?.id?config:sourceConfigs.current.get(s.id),source&&!source.demo?source.slotId:undefined):old;
+      await saveSettings({...session.settings,workspace,dashboards});
+    }finally{setAccountBusy(false);}
+  }
   function forgetSavedSource(id:string) {
     void accountAction(async()=>{
+      if(session.settings.dashboards?.some(d=>dashboardSourceIds(d).includes(id)))throw Error('DASHBOARD_DEPENDENCY: Hãy xóa widget tham chiếu nguồn này trước.');
       const workspace=session.settings.workspace;
       if(!workspace || !workspace.slots.some(s=>s.id===id) || sources.some(s=>s.slotId===id)) throw new Error('WORKSPACE_SLOT_INVALID: Hãy đóng nguồn trước khi bỏ cấu hình đã lưu.');
       await saveSettings({...session.settings,workspace:withoutSavedSource(workspace,id)});
@@ -416,7 +440,7 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
 
   return <div className={'workspace' + (user.data.profile.density === 'compact' ? ' density-compact' : '')}>
     <header className="topbar">
-      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.7.3</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
+      <div className="brand"><span className="brand-icon"><Icon name="logo" size={27}/></span><div><strong>KySheet<span className="version"> v0.8.0</span></strong><small>EXCEL REPORT AUTOMATION</small></div></div>
       <div className="header-right"><span className="privacy"><Icon name="shield" size={16}/> Local-first</span><button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><Icon name="settings"/></button><button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="upload"/> <span>Import Excel</span></button>
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>Tài khoản</small></span><span className="user-trigger-chevron" aria-hidden="true">⌄</span>
@@ -442,7 +466,8 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     <input ref={fileInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn dữ liệu Excel" onChange={(e: ChangeEvent<HTMLInputElement>) => { importFile(e.target.files?.[0]); e.target.value = ''; }}/>
     <input ref={replaceInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn file thay thế" onChange={e=>{importFile(e.target.files?.[0],true);e.target.value='';}}/>
     <input ref={templateInput} hidden type="file" accept=".json,application/json" aria-label="Chọn mẫu JSON" onChange={e => { void openTemplate(e.target.files?.[0]); e.target.value = ''; }}/>
-    <div className={'layout ' + (!configOpen ? 'wide' : '')}>
+    <nav className="dash-nav" aria-label="Chế độ làm việc"><button className={'button'+(!dashboardOpen?' primary':'')} disabled={locked||dashboardOpen} aria-pressed={!dashboardOpen}>Báo cáo</button><button className={'button'+(dashboardOpen?' primary':'')} disabled={locked||dashboardOpen} aria-pressed={dashboardOpen} onClick={()=>setDashboardOpen(true)}>Dashboard Designer</button></nav>
+    {dashboardOpen?<DashboardDesigner active={source} sources={sources} config={config} workspace={session.settings.workspace} saved={session.settings.dashboards??[]} disabled={locked} onQuery={queryDashboard} onSave={saveDashboards} onRun={(d,...args)=>executePeriod(...args,d)} onClose={()=>setDashboardOpen(false)}/>:<div className={'layout ' + (!configOpen ? 'wide' : '')}>
       {configOpen && <aside className="sidebar" aria-label="Cấu hình báo cáo">
         <div className="sidebar-title"><span>WORKSPACE</span><span className="dot"/></div>
         <Panel title="Nguồn dữ liệu" icon="file">
@@ -532,6 +557,6 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         </section>
         <footer className="footer"><span>KySheet · React + DuckDB-Wasm</span><span>Cấu hình theo tài khoản · Xử lý Excel local</span><nav className="public-links" aria-label="Thông tin KySheet"><a href="/about/" target="_blank" rel="noopener noreferrer">Giới thiệu</a><a href="/privacy/" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/terms/" target="_blank" rel="noopener noreferrer">Điều khoản</a></nav></footer>
       </main>
-    </div>
+    </div>}
   </div>;
 }
