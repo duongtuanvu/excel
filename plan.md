@@ -10,11 +10,11 @@
 
 KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hướng local-first, no-code. Người dùng thiết kế nguồn, luồng xử lý, chỉ số, báo cáo một lần; các kỳ tiếp theo chỉ thay file tương thích rồi chạy lại và xuất báo cáo.
 
-- Guest dùng đầy đủ các chức năng xử lý Excel cơ bản, không bắt buộc tạo tài khoản.
+- Bắt buộc đăng nhập trước khi vào workspace; không có chế độ Guest trên bản production mới. Mỗi tài khoản sở hữu riêng hồ sơ, template và cấu hình báo cáo.
 - Workbook, dữ liệu nguồn, truy vấn và kết quả xử lý ở browser; không gửi lên backend mặc định.
 - Cloudflare Workers Builds + Static Assets là phương án deploy chính, không nhầm với Pages.
 - DuckDB-Wasm chạy trong bộ nhớ phía client; Web Worker giữ UI không bị khóa bởi tác vụ nặng.
-- Không cần database server cho báo cáo local. Auth/cloud sync là module tùy chọn, chỉ triển khai khi có nhu cầu và lựa chọn nhà cung cấp.
+- Cloudflare D1 lưu user, session, hồ sơ, thư viện template và cấu hình báo cáo. Không lưu workbook hoặc kết quả phân tích trên server. Dữ liệu template/filter có thể nhạy cảm; người dùng được thông báo trước khi lưu.
 - Không đánh đổi tính đúng đắn của số liệu để tăng tốc. Không âm thầm bỏ dòng, nhóm, công thức lỗi hoặc dữ liệu không khớp.
 - Ưu tiên desktop cho thao tác thiết kế; mobile phải xem, lọc, nhập/xuất báo cáo thuận tiện.
 
@@ -26,7 +26,7 @@ KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hư�
 - Sau mỗi commit tính năng: cập nhật đúng checklist, bằng chứng (commit, lệnh test, kết quả), giới hạn còn tồn tại và việc tiếp theo ngay trong file này.
 - Không ghi dữ liệu khách hàng, token, thông tin định danh hay bí mật vào plan hoặc fixture công khai.
 
-**Trạng thái baseline:** Source đã có trên GitHub. Chưa xác nhận cài dependency, TypeScript build, E2E hoặc deploy Cloudflare thành công. Không có commit status checks được trả về cho commit baseline tại thời điểm rà soát; điều đó không chứng minh build Cloudflare đã pass hay fail.
+**Trạng thái baseline:** Chủ dự án xác nhận v0.3 đã deploy được tại https://excel.linhsumi.io.vn/. Chưa có log build/test độc lập hoặc smoke test đầy đủ trong phiên này. Giữ production đang chạy cho tới khi auth staging được cấu hình và nghiệm thu.
 
 ## 3. Roadmap tổng quan
 
@@ -34,7 +34,7 @@ KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hư�
 |---|---|---|---|
 | 00 | Build, deploy, QA baseline | P0 | Có nền tảng, chưa xác minh |
 | 01 | Core Report Engine v0.3 | P0 | Đã code; chờ nghiệm thu |
-| 02 | User Center local | P1 | Đã code; chờ nghiệm thu |
+| 02 | User Center theo tài khoản | P0 | UI local cũ; cần chuyển sang lưu server |
 | 03 | Data Sources & schema mapping | P0 | Một phần |
 | 04 | Data Model & Transformation Pipeline | P0 | Một phần |
 | 05 | Pivot & Measures Engine | P0 | Một phần |
@@ -43,13 +43,15 @@ KySheet là công cụ tự động hóa báo cáo Excel định kỳ theo hư�
 | 08 | Report Automation & Templates | P0 | Một phần |
 | 09 | Export & Sharing | P1 | Một phần |
 | 10 | Performance, PWA, Security & Accessibility | P1 | Một phần |
-| 11 | Auth, Cloud Sync & User Management | P2 | Chưa có, tùy chọn |
+| 11 | Auth, User Storage & User Management | P0 | Ưu tiên ngay, trước Phase 03 |
 | 12 | AI Report Builder | P3 | Chưa có, tùy chọn |
 | 13 | Release & Product Validation | P1 | Chưa nghiệm thu |
 
-P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm. P2/P3: mở rộng có điều kiện, không phải dependency của tính năng local.
+P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm. P2/P3: mở rộng có điều kiện. Auth và user storage là dependency bắt buộc của workspace production.
 
 ## 4. Checklist chi tiết
+
+**Yêu cầu thay đổi:** workspace chỉ mở sau login. Lưu cấu hình theo tài khoản; ưu tiên manual save có trạng thái rõ và phục hồi bản lưu gần nhất khi import schema tương thích. Template cũ có thể xuất/nhập JSON chủ động. Không tự đồng bộ dữ liệu từ browser profile cũ. Không đưa auth chưa cấu hình lên production hiện tại.
 
 ### Phase 00 — Build, deploy, QA baseline (P0)
 
@@ -100,7 +102,7 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 - [ ] 02.10 Xử lý xung đột nhiều tab; không vô tình ghi đè mẫu của tab khác.
 - [ ] 02.11 E2E lưu/reload/áp dụng/xóa, lỗi quota, reset và keyboard focus; kiểm tra mobile.
 
-**Nghiệm thu:** hoạt động không tài khoản, không lưu workbook; người dùng biết rõ hồ sơ local không phải cơ chế xác thực hoặc cách ly user.
+**Nghiệm thu mới:** hồ sơ và mẫu gắn với tài khoản xác thực, đồng bộ server, không lưu workbook. UI local cũ là baseline lịch sử; không dùng LocalStorage làm nguồn dữ liệu chính sau khi chuyển auth.
 
 ### Phase 03 — Data Sources & schema mapping (P0)
 
@@ -240,16 +242,18 @@ Thực hiện xuyên suốt các phase, không đợi đến cuối.
 
 **Nghiệm thu:** có baseline benchmark tái lập được và ngưỡng release theo thiết bị đã thử; không khẳng định chạy được mọi file ở giới hạn hiện tại.
 
-### Phase 11 — Auth, Cloud Sync & User Management (P2, tùy chọn)
+### Phase 11 — Auth, User Storage & User Management (P0)
 
-Chỉ triển khai sau khi chốt nhu cầu tài khoản thật, provider và chi phí. Guest/local-first không bị phụ thuộc module này.
+Yêu cầu mới: đăng nhập bắt buộc, người dùng chỉ truy cập cấu hình của chính mình. Chọn Google OAuth/OIDC Authorization Code + PKCE cho MVP (không tự lưu mật khẩu); Workers API cùng origin, D1 lưu user/session/settings. Tách team, billing và AI ra sau. Không tự động nhập LocalStorage cũ vào tài khoản.
 
-- [x] 11.01 Có UI hồ sơ local và mô tả kiến trúc tài khoản tương lai trong README; chưa có auth thật.
-- [ ] 11.02 Chọn OAuth/OIDC provider, domain, session model, môi trường staging và chính sách dữ liệu.
-- [ ] 11.03 Đăng ký/đăng nhập/đăng xuất, Google hoặc provider được chọn, quản lý phiên an toàn; không tự xây password auth nếu không cần.
-- [ ] 11.04 Workers API cho hồ sơ và metadata/template có consent; D1 schema/migration, owner_id và index.
-- [ ] 11.05 Authorization server-side theo quyền sở hữu; tách role admin với entitlement gói Free/Pro, không tin role từ client.
-- [ ] 11.06 Đồng bộ mẫu đa thiết bị, version conflict, offline queue và retry; mặc định không upload workbook hoặc kết quả.
+- [x] 11.01 Có UI hồ sơ local làm baseline để chuyển đổi.
+- [x] 11.01a Chốt kiến trúc MVP: Google login + session cookie HttpOnly/Secure/SameSite, Workers API + D1, không có guest.
+- [ ] 11.02 Cấu hình OAuth client, domain/callback, D1 binding/migration và secrets trong môi trường staging; chính sách dữ liệu.
+- [ ] 11.03 Login Google, tạo tài khoản lần đầu, logout/revoke session, chống CSRF, state/PKCE, cookie bảo mật, session hết hạn. Không có password auth.
+- [ ] 11.03a Login gate trước khi khởi tạo Excel engine; logout/401 phải loại bỏ dữ liệu phiên khỏi workspace.
+- [ ] 11.04 Workers API và D1 migration cho user/session/settings; lưu hồ sơ, template và cấu hình báo cáo gần nhất theo user_id xác thực; giới hạn payload và schema.
+- [ ] 11.05 Authorization server-side theo session user_id; không nhận owner_id từ client; test tài khoản A/B không thấy/sửa dữ liệu của nhau.
+- [ ] 11.06 Lưu/khôi phục cấu hình qua nhiều thiết bị, revision CAS chống ghi đè tab; lỗi lưu hiển thị rõ. Không upload workbook/kết quả. Offline queue/auto-save nâng cao để sau.
 - [ ] 11.07 Workspace/team, invitation, role owner/editor/viewer, quyền truy cập và thu hồi.
 - [ ] 11.08 Quản lý tài khoản, export dữ liệu, xóa tài khoản, session revocation và retention.
 - [ ] 11.09 Admin console, abuse/rate limit, audit log không chứa dữ liệu nguồn, quota và đo chi phí thực.
@@ -286,13 +290,13 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 
 | Mốc | Phạm vi | Điều kiện để chuyển tiếp |
 |---|---|---|
-| v0.3.x | Phase 00 + nghiệm thu 01/02 | Build/test/deploy chạy được |
+| v0.3.x-auth | Phase 11 MVP + chuyển Phase 02 + Phase 00 | Đăng nhập, lưu cấu hình riêng và test cách ly hai tài khoản; deploy staging |
 | v0.4 | Phase 03 + core Phase 04 | Multi-source, mapping, JOIN/transform đúng |
 | v0.5 | Phase 05 | Pivot nhiều chiều + measures đúng số liệu |
 | v0.6 | Phase 06/07 | Dashboard kéo thả và tương tác |
 | v0.7 | Phase 08/09 | Template định kỳ + xuất báo cáo đầy đủ |
 | v1.0 | Hoàn thiện P0/P1, Phase 10/13 | UAT, benchmark, bảo mật và release gates đạt |
-| Sau v1.0 | Phase 11/12 nếu cần | Có nhu cầu, kiến trúc và chi phí được chốt |
+| Sau v1.0 | Phase 11 mở rộng (team/admin/billing) + Phase 12 | Có nhu cầu, kiến trúc và chi phí được chốt |
 
 Đây là thứ tự ưu tiên, không phải cam kết thời gian hoặc ngày release. Các việc security/QA/performance cần đi cùng từng phase.
 
@@ -303,9 +307,9 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** 00.06 → 00.12. Chốt cách build, kiểm thử và deploy trước; tiếp đó thiết kế contract cho nhiều nguồn và pipeline.
+**Next action:** triển khai 11.03–11.06 trước trên branch auth, cập nhật Phase 02 và Phase 00. Chỉ merge/deploy main khi D1 + OAuth đã cấu hình và test login, logout, cách ly user A/B đạt. Phase 03 tạm dừng.
 
-**Known risks:** chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
+**Known risks:** OAuth client/D1 binding chưa cấu hình; cần xác nhận tên Worker thực tế, migration và callback trước release.  chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; dữ liệu mất khi reload trừ mẫu/hồ sơ; LocalStorage không cách ly user và có thể xung đột tab; chưa có auth thật. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
 ## 7. Definition of Done
 
