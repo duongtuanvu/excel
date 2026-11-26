@@ -1,0 +1,56 @@
+import { expect, test } from './account-fixture';
+import * as XLSX from 'xlsx';
+function file(name:string,rows:(string|number|boolean|Date|null)[][]){
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows,{cellDates:true}),'Sales');
+  return {name,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(wb,{type:'buffer',bookType:'xlsx'})};
+}
+test('exact whole-source quality statistics, frequency and invalidation after replacement',async({page})=>{
+  await page.goto('/');
+  await expect(page.getByTestId('filtered-count')).toHaveText('180');
+  await page.getByLabel('Chọn dữ liệu Excel',{exact:true}).setInputFiles(file('quality.xlsx',[['Region','Amount'],['A',10],['A',10],['B',20],['B',null],[null,30],['  ',40]]));
+  await expect(page.getByTestId('filtered-count')).toHaveText('6');
+  await page.getByRole('button',{name:'Thêm điều kiện'}).click();
+  await page.getByLabel('Giá trị lọc 1').fill('A');
+  await expect(page.getByTestId('filtered-count')).toHaveText('2');
+  const panel=page.getByRole('region',{name:'Chất lượng dữ liệu',exact:true});
+  await panel.getByRole('button',{name:'Phân tích chất lượng',exact:true}).click();
+  await expect(panel.getByTestId('profile-rows')).toHaveText('6');
+  await expect(panel.getByTestId('profile-missing')).toHaveText('3');
+  await expect(panel.getByTestId('profile-groups')).toHaveText('1');
+  await expect(panel.getByTestId('profile-duplicates')).toHaveText('1');
+  const amount=panel.getByRole('row').filter({has:panel.getByRole('rowheader',{name:/Amount/})});
+  await expect(amount.getByRole('cell').nth(1)).toHaveText('4');
+  await expect(amount.getByRole('cell').nth(3)).toHaveText('10');
+  await expect(amount.getByRole('cell').nth(4)).toHaveText('40');
+  await expect(amount.getByRole('cell').nth(5)).toHaveText('110');
+  await expect(amount.getByRole('cell').nth(6)).toHaveText('22');
+  await panel.getByLabel('Cột phân bố',{exact:true}).selectOption('c0');
+  await panel.getByRole('button',{name:'Xem phân bố',exact:true}).click();
+  const distribution=panel.getByTestId('profile-distribution');
+  await expect(distribution).toContainText('2 giá trị khác nhau');
+  await expect(distribution).toContainText('4 ô không trống');
+  await expect(distribution.getByText('A',{exact:true})).toBeVisible();
+  await expect(distribution.getByText('B',{exact:true})).toBeVisible();
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.getByLabel('Chọn file thay thế',{exact:true}).setInputFiles(file('new.xlsx',[['Region','Amount'],['A',50]]));
+  await expect(page.getByTestId('metric-total')).toHaveText('50');
+  await expect(panel.getByTestId('profile-rows')).toHaveCount(0);
+  await panel.getByRole('button',{name:'Phân tích chất lượng',exact:true}).click();
+  await expect(panel.getByTestId('profile-rows')).toHaveText('1');
+  await expect(panel.getByTestId('profile-duplicates')).toHaveText('0');
+});
+test('quality profiling handles header-only and empty columns without division by zero',async({page})=>{
+  await page.goto('/');
+  await expect(page.getByTestId('filtered-count')).toHaveText('180');
+  await page.getByLabel('Chọn dữ liệu Excel',{exact:true}).setInputFiles(file('empty.xlsx',[['Region','Amount']]));
+  await expect(page.getByTestId('filtered-count')).toHaveText('0');
+  const panel=page.getByRole('region',{name:'Chất lượng dữ liệu',exact:true});
+  await panel.getByRole('button',{name:'Phân tích chất lượng',exact:true}).click();
+  await expect(panel.getByTestId('profile-rows')).toHaveText('0');
+  await expect(panel.getByTestId('profile-missing')).toHaveText('0');
+  await expect(panel.getByTestId('profile-duplicates')).toHaveText('0');
+  await panel.getByRole('button',{name:'Xem phân bố',exact:true}).click();
+  await expect(panel.getByTestId('profile-distribution')).toContainText('Không có giá trị không trống.');
+});

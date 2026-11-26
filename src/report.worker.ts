@@ -8,10 +8,12 @@ import { WORKSPACE_LIMITS, sourceTable, uniqueAlias, normalizeAlias, replacement
 import type { ManagedSource, Workspace, BookBudget } from './source-model';
 import { validateSavedSource } from './workspace-model';
 import type { SavedSource } from './workspace-model';
+import type { SourceProfile } from './profile-model';
+import { profileSource, profileDistribution } from './profile-engine';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 type Book = {id:string; name:string; data:XLSX.WorkBook; budget:BookBudget; demo:boolean};
-type Entry = {source:ManagedSource;chars:number};
+type Entry = {source:ManagedSource;chars:number;profile?:SourceProfile};
 const books = new Map<string,Book>();
 const sources = new Map<string,Entry>();
 let activeId:string|null=null;
@@ -242,6 +244,19 @@ async function exportReport(config: Config, format: 'xlsx' | 'csv', source:Manag
   return { bytes, name: name + '.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 }
 
+async function getProfile(item:Entry):Promise<SourceProfile>{
+  if(item.profile?.revision===item.source.revision)return item.profile;
+  const {conn}=await connect();
+  // Adapt Arrow rows at the boundary; only aggregate results cross the report worker.
+  try{
+    const result=await profileSource(item.source,async sql=>await conn.query(sql));
+    item.profile=result;
+    return result;
+  }catch(error){
+    if(error instanceof Error && /^PROFILE_[A-Z_]+:/.test(error.message))throw error;
+    throw new Error('PROFILE_QUERY_FAILED: Không thể hoàn tất thống kê. Hãy thử chia nhỏ nguồn dữ liệu.');
+  }
+}
 async function handle(req: Request):Promise<unknown>{
   switch(req.type){
     case 'demo':{
@@ -288,6 +303,16 @@ async function handle(req: Request):Promise<unknown>{
       const item=entry(req.input.sourceId,req.input.revision);
       const book=readBook(req.input.name,req.input.bytes);
       return store(book,replacementSheet(item.source.sheet,book.data.SheetNames),item);
+    }
+    case 'profile':return getProfile(entry(req.input.sourceId,req.input.revision));
+    case 'distribution':{
+      const item=entry(req.input.sourceId,req.input.revision),profile=await getProfile(item);
+      const {conn}=await connect();
+      try{return await profileDistribution(item.source,profile,req.input.columnId,async sql=>await conn.query(sql));}
+      catch(error){
+        if(error instanceof Error && /^PROFILE_[A-Z_]+:/.test(error.message))throw error;
+        throw new Error('PROFILE_DISTRIBUTION_FAILED: Không thể tính phân bố của cột này.');
+      }
     }
     case 'report':return makeReport(req.input.config,req.input.page,entry(req.input.sourceId,req.input.revision).source);
     case 'export':return exportReport(req.input.config,req.input.format,entry(req.input.sourceId,req.input.revision).source);

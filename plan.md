@@ -114,7 +114,8 @@ P0: cốt lõi, ưu tiên thực hiện trước. P1: hoàn thiện sản phẩm
 - [ ] 03.05 Chọn hàng header, vùng dữ liệu, bỏ dòng tiêu đề phụ và dòng tổng; hỗ trợ merge-cell có quy tắc rõ.
 - [ ] 03.06 Schema editor: đổi tên, kiểu cột, định dạng ngày/số theo locale vi-VN; giữ mã định danh/leading zeros.
 - [ ] 03.07 Mapping tên cột cũ/mới, phát hiện thiếu/thừa/sai kiểu, xem diff trước khi thay nguồn.
-- [ ] 03.08 Data profiling: null, distinct, duplicate, min/max, phân bố và tỷ lệ lỗi parse.
+- [x] 03.08a Source profiling v0.5.2: null, distinct, duplicate, min/max/sum/avg, top 10 distribution, tỷ lệ lỗi kiểu trên bảng đã nhập; cache theo revision.
+- [ ] 03.08b Kiểm tra lỗi parse trên dữ liệu gốc và histogram nâng cao khi có schema editor; xác minh CI profiling.
 - [x] 03.09a Source thay từng nguồn bằng transaction, kiểm tra cột và kiểu, revision chống stale query, giữ nguồn cũ khi lỗi.
 - [ ] 03.09b Batch refresh nhiều nguồn và preview schema diff tương tác.
 - [ ] 03.10 Fixture nhiều nguồn, header bất thường, file lỗi/empty, mapping sai và thay file tương thích.
@@ -320,7 +321,7 @@ Phụ thuộc: schema/pipeline/measures/dashboard đã ổn định.
 | 2026-11-26 | `f9c0dbc` | Đối chiếu tree, README, package.json, model, worker, App, UserCenter và test files | Source v0.3.0 đã có; runtime chưa xác minh |
 | 2026-11-26 | `f9c0dbc` | Commit combined status trả danh sách rỗng | Không có bằng chứng CI pass từ kết quả này |
 
-**Next action:** xác minh CI v0.5.1 trên feature/multi-source, review rồi merge main. Smoke test production và cách ly hai user thật. Phase 03 tiếp theo: Data Profiling, schema editor, header/range, mapping và batch refresh trước Phase 04 JOIN/UNION.
+**Next action:** chạy CI Data Profiling v0.5.2, merge main nếu pass; smoke test deployment production. Tiếp theo Schema Editor, header/range, mapping và batch refresh, rồi Phase 04 JOIN/UNION.
 
 **Known risks:** Google OAuth production đã đăng nhập thành công theo chủ dự án; vẫn cần kiểm tra schema/index, migration tracking, lưu/khôi phục cấu hình, session revocation, tenant isolation và xung đột revision. Chưa có lockfile/CI; dependency và WASM/CDN runtime cần xác minh; file lớn/zip bomb; độ chính xác DOUBLE với tiền; workbook và kết quả mất khi reload, chỉ cấu hình lưu chủ động được giữ trên D1. Không đưa các mục này vào release notes như đã giải quyết nếu chưa có bằng chứng.
 
@@ -365,11 +366,13 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source regression test cho SQL table ID, schema compatibility, alias và budget.
 - [x] v0.5 CI run 45749263382: 21/21 unit/integration pass, build pass, 6/7 E2E pass gồm multi-source; E2E export lỗi ở XLSX.readFile trong Node ESM.
 - [x] Source sửa E2E export dùng download.saveAs + readFileSync + XLSX.read, không bỏ bài test.
-- [ ] CI toàn bộ v0.5.1 pass và smoke test production sau merge.
+- [x] CI toàn bộ v0.5.1 pass (25 unit/integration, 9 E2E); merge main 11f2ead, CI main run 45753755786 pass.
+- [ ] Smoke test deployment production v0.5.1 và hai tài khoản thật.
 - [x] Source persist cấu hình workspace theo tài khoản: version 1, stable slot UUID, alias/sheet/schema/config từng nguồn, không lưu file hoặc kết quả. Tương thích payload cũ và CAS.
 - [x] Source restore từng slot bằng file tương thích, giữ các slot chưa nạp khi lưu; bỏ slot có xác nhận.
 - [x] Source unit/integration/E2E workspace: validate, isolation, legacy write, partial restore, sai schema, reset và forget.
-- [ ] CI workspace mới, kiểm thử hai tài khoản thật và multi-device trên D1 production.
+- [x] CI workspace v0.5.1 pass.
+- [ ] Kiểm thử hai tài khoản thật và multi-device trên D1 production.
 - [ ] Hoàn tất header/range, kiểu cột, profiling, mapping và batch refresh trước Phase 04.
 
 ### Workspace account persistence v0.5.1
@@ -382,3 +385,12 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] CI 45752215492: 25/25 unit/integration, build và Chromium pass; 8/9 E2E pass, gồm workspace restore. Export workbook assertions pass; lỗi locator Sheet ở bước tiếp theo.
 - [x] Thêm accessible name rõ ràng cho Sheet combobox và regression test chuyển sheet qua lại giữ filter. Chờ CI lại.
 - Quy trình theo yêu cầu chủ dự án: feature branch → CI pass → merge main (Cloudflare Workers Builds) → module tiếp theo. Không đánh dấu production smoke test nếu chưa xác minh. Không merge module có lỗi CI chưa xử lý.
+
+### Data Profiling v0.5.2
+
+- [x] Merge main v0.5.1 tại 11f2ead; feature CI run 45753022995 và main CI run 45753755786 success.
+- [x] Source SQL profiling theo bảng/revision, thống kê aggregate batch 8 cột, exact duplicate rows, top 10 frequency, kiểu dữ liệu đã chuẩn hóa.
+- [x] Source UI responsive, on-demand, kết quả riêng toàn nguồn, không áp dụng filter báo cáo; local-only.
+- [x] Source unit và E2E kiểm tra SQL ID, aggregate, empty, duplicate, filter independence, distribution, replace invalidation và mobile.
+- [ ] CI pass và merge main v0.5.2; smoke test Cloudflare production.
+- Chưa có schema editor, histogram bin, lỗi parse trước chuẩn hóa, benchmark trên mobile yếu. Không thay OAuth/D1.
