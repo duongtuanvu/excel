@@ -18,11 +18,23 @@ test('pivot validation and persistence preserve formulas and reject invalid depe
  assert.equal(arithmetic(null,2,'+'),null);
  assert.deepEqual(renamePivot(pivot,n=>n==='Amount'?'Revenue':n).measures[0],{...pivot.measures[0],column:'Revenue'});
 });
-test('pivot totals recompute average and distinct, not sum of visible groups',async()=>{
+test('pivot totals recompute average and distinct over a numeric-only SQLite fixture',async()=>{
  const db=new DatabaseSync(':memory:');
  try{
  db.exec("CREATE TABLE source_s1(c0 TEXT,c1 TEXT,c2 TEXT,c3 TEXT); INSERT INTO source_s1 VALUES ('N','Jan','10','A'),('N','Jan','20','A'),('S','Feb','90','B')");
- const result=await calculatePivot({...defaultConfig(columns),pivot},columns,'source_s1',async sql=>db.prepare(sql).all());
+ // SQLite is a lightweight fixture engine, not a DuckDB compatibility layer.
+ // For this fixture c2 contains only known valid numeric strings, so CAST and
+ // TRY_CAST have identical results. Translate only that exact expression;
+ // unsupported SQL still fails. Chromium E2E runs the original DuckDB SQL.
+ let translated=0;
+ const result=await calculatePivot({...defaultConfig(columns),pivot},columns,'source_s1',async sql=>{
+   const numeric='TRY_CAST("c2" AS DOUBLE)';
+   if(sql.includes(numeric))translated++;
+   const fixtureSql=sql.replaceAll(numeric,'CAST("c2" AS DOUBLE)');
+   assert.ok(!fixtureSql.includes('TRY_CAST('),'Unexpected DuckDB cast in numeric-only fixture');
+   return db.prepare(fixtureSql).all();
+ });
+ assert.ok(translated>0,'The AVG query must contain the original DuckDB numeric expression.');
  const ri=result.rows.findIndex(a=>a.level===0),ci=result.columns.findIndex(a=>a.level===0);
  assert.deepEqual(result.values[ri].slice(ci*3,ci*3+3),[40,2,20]);
  const n=result.rows.findIndex(a=>a.labels[0]==='N'),feb=result.columns.findIndex(a=>a.labels[0]==='Feb');

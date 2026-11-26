@@ -456,3 +456,5 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source numeric row-level binary expressions and aggregate-measure arithmetic, ordered dependency validation, NULL on division by zero/nonfinite, formats number/VND/percent. No raw SQL/eval.
 - [x] Source persistence in versioned Config, workspace/template/period compatibility, schema rename remapping and old-client write protection, full matrix CSV/XLSX export.
 - [ ] CI + release and production smoke test. Remaining: drag/drop, expand/collapse, top-N, % of totals, drill-down, richer expressions/DAX, time intelligence, DECIMAL accuracy; no claim of full Phase 05 acceptance.
+
+- [x] CI run 45793164999: 51/52 unit/integration pass; build and 21/21 Chromium E2E pass, release skipped. Failed test used SQLite to execute DuckDB TRY_CAST syntax. Fixed the numeric-only SQLite fixture with one explicitly scoped equivalent CAST substitution; retained all original aggregate/empty-intersection assertions and unmodified production SQL. Added a real DuckDB-Wasm E2E for row formulas, two-level subtotals, zero division and unchanged source. CI and merge still require verification.

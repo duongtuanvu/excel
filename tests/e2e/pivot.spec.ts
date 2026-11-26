@@ -49,3 +49,40 @@ test('pivot average distinct and ratio persist, export and replay on next period
  await expect(page.getByTestId('metric-total')).toHaveText('100');
  await expect(panel.getByTestId('pivot-matrix')).toBeVisible();
 });
+
+
+test('DuckDB row formulas calculate real subtotals and preserve NULL on zero division',async({page})=>{
+ const wb=XLSX.utils.book_new();
+ XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([['Region','City','Qty','Price'],['N','A',2,10],['N','B',4,20],['S','C',0,30]]),'Data');
+ await page.goto('/');
+ await expect(page.getByTestId('filtered-count')).toHaveText('180');
+ await page.getByLabel('Chọn dữ liệu Excel',{exact:true}).setInputFiles({name:'formula.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:XLSX.write(wb,{type:'buffer',bookType:'xlsx'})});
+ await expect(page.getByTestId('metric-total')).toHaveText('6');
+ const panel=page.getByRole('region',{name:'Pivot nâng cao',exact:true});
+ await panel.getByRole('button',{name:'Mở Pivot',exact:true}).click();
+ await panel.getByRole('button',{name:'Thêm hàng Pivot',exact:true}).click();
+ await panel.getByLabel('Hàng Pivot 2',{exact:true}).selectOption('City');
+ await panel.getByLabel('Tên chỉ số 1',{exact:true}).fill('Extended price');
+ await panel.getByLabel('Loại chỉ số 1',{exact:true}).selectOption('row');
+ await panel.getByLabel('Vế trái chỉ số 1',{exact:true}).selectOption('Qty');
+ await panel.getByLabel('Vế phải chỉ số 1',{exact:true}).selectOption('Price');
+ await panel.getByRole('button',{name:'Thêm chỉ số Pivot',exact:true}).click();
+ await panel.getByLabel('Tên chỉ số 2',{exact:true}).fill('Average ratio');
+ await panel.getByLabel('Loại chỉ số 2',{exact:true}).selectOption('row');
+ await panel.getByLabel('Phép chỉ số 2',{exact:true}).selectOption('avg');
+ await panel.getByLabel('Vế trái chỉ số 2',{exact:true}).selectOption('Price');
+ await panel.getByLabel('Toán tử chỉ số 2',{exact:true}).selectOption('/');
+ await panel.getByLabel('Vế phải chỉ số 2',{exact:true}).selectOption('Qty');
+ await panel.getByRole('button',{name:'Kiểm tra Pivot',exact:true}).click();
+ const matrix=panel.getByTestId('pivot-matrix'),alert=panel.getByRole('alert');
+ await expect(matrix.or(alert)).toBeVisible({timeout:30000});
+ if(await alert.count())throw Error(await alert.innerText());
+ const row=(name:string)=>matrix.getByRole('row').filter({has:page.getByRole('rowheader',{name,exact:true})});
+ await expect(row('Tổng phụ · N').getByRole('cell').nth(0)).toHaveText('100,00');
+ await expect(row('Tổng phụ · N').getByRole('cell').nth(1)).toHaveText('5,00');
+ await expect(row('Tổng phụ · S').getByRole('cell').nth(0)).toHaveText('0,00');
+ await expect(row('Tổng phụ · S').getByRole('cell').nth(1)).toHaveText('—');
+ await expect(row('Tổng cộng').getByRole('cell').nth(0)).toHaveText('100,00');
+ await expect(row('Tổng cộng').getByRole('cell').nth(1)).toHaveText('5,00');
+ await expect(page.getByTestId('metric-total')).toHaveText('6');
+});
