@@ -78,6 +78,17 @@ test('DuckDB row formulas calculate real subtotals and preserve NULL on zero div
  await expect(matrix.or(alert)).toBeVisible({timeout:30000});
  if(await alert.count())throw Error(await alert.innerText());
  const row=(name:string)=>matrix.getByRole('row').filter({has:page.getByRole('rowheader',{name,exact:true})});
+ await expect(row('Tổng phụ · N')).toHaveCount(1);
+ const collapse=row('Tổng phụ · N').getByRole('button',{name:'Thu gọn Tổng phụ · N',exact:true});
+ await expect(collapse).toHaveAttribute('aria-expanded','true');
+ await collapse.click();
+ await expect(row('N / A')).toHaveCount(0);
+ await expect(row('N / B')).toHaveCount(0);
+ await expect(row('S / C')).toHaveCount(1);
+ await expect(row('Tổng phụ · N').getByRole('cell').nth(0)).toHaveText('100,00');
+ await row('Tổng phụ · N').getByRole('button',{name:'Mở rộng Tổng phụ · N',exact:true}).click();
+ await expect(row('N / A')).toHaveCount(1);
+ await expect(row('N / B')).toHaveCount(1);
  await expect(row('Tổng phụ · N').getByRole('cell').nth(0)).toHaveText('100,00');
  await expect(row('Tổng phụ · N').getByRole('cell').nth(1)).toHaveText('5,00');
  await expect(row('Tổng phụ · S').getByRole('cell').nth(0)).toHaveText('0,00');

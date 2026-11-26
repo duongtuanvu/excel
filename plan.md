@@ -464,3 +464,5 @@ Checklist ở mục này là mẫu gate cho từng lần đóng phase, không đ
 - [x] Source Top N leaf ranking by raw grand-column measure, full filtered totals retained; percent of grand/row/column computed from original aggregates, not transformed measures.
 - [x] Source row collapse, drill-down exact group predicates, bounded 25-row pages, saved analytics and old-client write protection.
 - [ ] CI/auto release and production smoke test. Column collapse, drag/drop, richer expressions, time intelligence and DECIMAL remain future work.
+
+- [x] CI 45796076490: 56/56 unit/integration and production build passed; 22/23 E2E passed. Subtotal rowheader accessible name changed when a nested expand/collapse button was introduced; the exact-name regression locator could no longer find it. Stabilized rowheader accessible name via aria-label, retained independent button labels and aria-expanded, preserved all numeric assertions and added collapse/expand regression checking child visibility and unchanged subtotal. No SQL changes. Awaiting new CI and release verification.
