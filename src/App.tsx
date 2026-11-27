@@ -1,7 +1,7 @@
 import DashboardDesigner from './DashboardDesigner';
 import {dashboardSourceIds} from './dashboard-model';
 import type {Dashboard,WidgetData} from './dashboard-model';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, ReactNode } from 'react';
 import { EngineClient } from './worker-client';
 import { UiIcon } from './UiIcons';
@@ -48,6 +48,7 @@ const groupLabel = (g: Group) => g.labels.map(v => v ?? '(Trống)').join(' / ')
 const hasValue = (f: Filter) => f.operator !== 'empty' && f.operator !== 'notEmpty';
 
 type FocusSection = 'all' | 'report' | 'pivot' | 'prep';
+const TT99Panel = lazy(() => import('./TT99Panel'));
 
 function download(bytes: BlobPart, name: string, mime: string) {
   const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
@@ -110,6 +111,8 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
   const busyRef = useRef(false);
   const user = { data: session.settings, warning: '' };
   const [dashboardOpen,setDashboardOpen]=useState(false);
+  const [tt99Mode, setTt99Mode] = useState<'unopened' | 'open' | 'hidden'>('unopened');
+  const tt99Open = tt99Mode === 'open';
   const [focusSection,setFocusSection]=useState<FocusSection>('all');
   const [accountBusy, setAccountBusy] = useState(false);
   const [profiling, setProfiling] = useState(false);
@@ -435,13 +438,14 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <div><strong>KySheet<span className="version"> v0.8.0</span></strong><small>EXCEL REPORT STUDIO</small></div>
       </div>
       <nav className="mode-switcher" aria-label="Chế độ làm việc">
-        <button type="button" className={'mode-pill' + (!dashboardOpen ? ' active' : '')} disabled={locked || dashboardOpen} aria-pressed={!dashboardOpen}><UiIcon name="chart" size={14}/><span>Báo cáo</span></button>
-        <button type="button" className={'mode-pill' + (dashboardOpen ? ' active' : '')} disabled={locked || dashboardOpen} aria-pressed={dashboardOpen} onClick={()=>setDashboardOpen(true)}><UiIcon name="dashboard" size={14}/><span>Dashboard Designer</span></button>
+        <button type="button" className={'mode-pill' + (!dashboardOpen && !tt99Open ? ' active' : '')} disabled={locked || dashboardOpen} aria-pressed={!dashboardOpen && !tt99Open} onClick={() => tt99Open && setTt99Mode('hidden')}><UiIcon name="chart" size={14}/><span>Báo cáo</span></button>
+        <button type="button" className={'mode-pill' + (dashboardOpen ? ' active' : '')} disabled={locked || dashboardOpen} aria-pressed={dashboardOpen} onClick={() => { if (tt99Open) setTt99Mode('hidden'); setDashboardOpen(true); }}><UiIcon name="dashboard" size={14}/><span>Dashboard Designer</span></button>
+        <button type="button" className={'mode-pill' + (tt99Open ? ' active' : '')} disabled={dashboardOpen} aria-pressed={tt99Open} onClick={() => setTt99Mode('open')}><UiIcon name="table" size={14}/><span>BCTC TT99</span></button>
       </nav>
       <div className="header-right">
         <span className="privacy" title="Dữ liệu Excel chỉ xử lý trong trình duyệt"><UiIcon name="shield" size={14}/> Local-first</span>
-        {!dashboardOpen && <button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn thanh cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><UiIcon name="sliders" size={16}/></button>}
-        <button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><UiIcon name="upload" size={15}/> <span>Import Excel</span></button>
+        {!dashboardOpen && !tt99Open && <button className="button icon-button" onClick={() => setConfigOpen(v => !v)} title="Hiện / ẩn thanh cấu hình" aria-label="Hiện hoặc ẩn cấu hình" aria-expanded={configOpen}><UiIcon name="sliders" size={16}/></button>}
+        {!tt99Open && <button className="button primary" disabled={locked} onClick={() => fileInput.current?.click()}><UiIcon name="upload" size={15}/> <span>Import Excel</span></button>}
         <button type="button" ref={userButton} className="user-trigger" aria-label="Mở không gian cá nhân" aria-haspopup="dialog" onClick={() => setUserOpen(true)}>
           <span className="user-avatar">{initials(user.data.profile.displayName)}</span><span className="user-trigger-copy"><strong>{user.data.profile.displayName}</strong><small>{user.data.profile.workspace}</small></span><span className="user-trigger-chevron" aria-hidden="true"><UiIcon name="chevronDown" size={14}/></span>
         </button>
@@ -467,6 +471,8 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
     <input ref={fileInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn dữ liệu Excel" onChange={(e: ChangeEvent<HTMLInputElement>) => { importFile(e.target.files?.[0]); e.target.value = ''; }}/>
     <input ref={replaceInput} hidden type="file" accept=".xlsx,.xls,.csv,.tsv" aria-label="Chọn file thay thế" onChange={e=>{importFile(e.target.files?.[0],true);e.target.value='';}}/>
     <input ref={templateInput} hidden type="file" accept=".json,application/json" aria-label="Chọn mẫu JSON" onChange={e => { void openTemplate(e.target.files?.[0]); e.target.value = ''; }}/>
+    {tt99Mode !== 'unopened' && <div hidden={!tt99Open}><Suspense fallback={<p role="status" className="empty">Đang mở hồ sơ BCTC…</p>}><TT99Panel/></Suspense></div>}
+    <div hidden={tt99Open}>
     {dashboardOpen?<DashboardDesigner active={source} sources={sources} config={config} workspace={session.settings.workspace} saved={session.settings.dashboards??[]} disabled={locked} onQuery={queryDashboard} onSave={saveDashboards} onRun={(d,...args)=>executePeriod(...args,d)} onClose={()=>setDashboardOpen(false)}/>:<div className={'layout ' + (!configOpen ? 'wide' : '')}>
       {configOpen && <aside className="sidebar" aria-label="Cấu hình báo cáo">
         <div className="sidebar-title"><span>WORKSPACE</span><span className="engine-pill"><span className={'dot ' + (!source ? 'inactive' : '')}/>{source ? 'Sẵn sàng' : 'Khởi tạo'}</span></div>
@@ -580,8 +586,8 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
               <><div className="table-scroll"><table><thead><tr><th>#</th>{columns.map(c => <th key={c.id}>{c.name}<small className="column-type">{kindNames[c.kind]}</small></th>)}</tr></thead><tbody>{result.preview.map((row,i) => <tr key={i}><td className="row-number">{result.page*LIMITS.page+i+1}</td>{row.map((v,j) => <td key={j} className={columns[j]?.kind === 'number' ? 'numeric' : ''}>{display(v)}</td>)}</tr>)}{!result.preview.length && <tr><td colSpan={columns.length+1} className="empty-cell">Không có dữ liệu phù hợp.</td></tr>}</tbody></table></div><Pager page={result.page} total={result.filtered} onChange={setPage} disabled={locked || loading}/></> : <div className="empty">{loading || busy ? 'Đang tải dữ liệu…' : 'Chưa có dữ liệu để hiển thị.'}</div>}
           </section>
         </>}
-        {showPivot && source && <PivotPanel key={'pivot:'+source.id+':'+source.revision+':'+JSON.stringify(config.pivot??null)} config={config} columns={columns} result={result?.pivot} queryError={result?.pivotError??queryError} disabled={locked} onPreview={previewPivot} onDrill={drillPivot} onApply={pivot=>patch({pivot})}/>}
-        {showPrep && hasPrepPanels && <div className="studio-section">
+        {source && <div hidden={!showPivot}><PivotPanel key={'pivot:'+source.id+':'+source.revision+':'+JSON.stringify(config.pivot??null)} config={config} columns={columns} result={result?.pivot} queryError={result?.pivotError??queryError} disabled={locked} onPreview={previewPivot} onDrill={drillPivot} onApply={pivot=>patch({pivot})}/></div>}
+        {hasPrepPanels && <div className="studio-section" hidden={!showPrep}>
           <div className="studio-section-head">
             <div>
               <span className="eyebrow">DATA STUDIO</span>
@@ -601,5 +607,6 @@ export default function App({ session, saveSettings, refreshSettings, logout, sa
         <footer className="footer"><span>KySheet · React + DuckDB-Wasm</span><span>Cấu hình theo tài khoản · Xử lý Excel local</span><nav className="public-links" aria-label="Thông tin KySheet"><a href="/about/" target="_blank" rel="noopener noreferrer">Giới thiệu</a><a href="/privacy/" target="_blank" rel="noopener noreferrer">Quyền riêng tư</a><a href="/terms/" target="_blank" rel="noopener noreferrer">Điều khoản</a></nav></footer>
       </main>
     </div>}
+    </div>
   </div>;
 }

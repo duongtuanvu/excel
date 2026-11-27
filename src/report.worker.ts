@@ -1,4 +1,6 @@
 import * as XLSX from 'xlsx';
+import { readSourceWorkbook, readSheetRows, workbookCellCount } from './workbook-input';
+import { losslessNumericCell } from './import-number';
 import {validateDashboard,dashboardSourceIds,DASHBOARD_LIMITS} from './dashboard-model';
 import type {WidgetData} from './dashboard-model';
 import {queryWidget} from './dashboard-engine';
@@ -76,22 +78,11 @@ function releaseBooks(){
   for(const id of books.keys())if(!referenced.has(id))books.delete(id);
 }
 function makeBook(data:XLSX.WorkBook,name:string,bytes:number,demo=false):Book{
-  if(!data.SheetNames.length||data.SheetNames.length>WORKSPACE_LIMITS.sheetsPerBook)throw new Error('WORKBOOK_LIMIT: Workbook phải có 1–32 sheet.');
-  let cells=0;
-  for(const sheet of data.SheetNames){
-    const ws=data.Sheets[sheet], ref=ws?.['!fullref']||ws?.['!ref'];
-    if(!ref)continue;
-    const r=XLSX.utils.decode_range(ref), n=(r.e.r-r.s.r+1)*(r.e.c-r.s.c+1);
-    if(!Number.isSafeInteger(n)||n<0)throw new Error('WORKBOOK_RANGE_INVALID: Vùng dữ liệu không hợp lệ.');
-    cells+=n;
-    if(cells>WORKSPACE_LIMITS.bookCells)throw new Error('WORKBOOK_CELLS_LIMIT: Workbook vượt 2 triệu ô.');
-  }
+  const cells=workbookCellCount(data);
   return {id:'b'+(++nextBook),name,data,budget:{bytes,cells,sheets:data.SheetNames.length},demo};
 }
 function readBook(name:string,bytes:ArrayBuffer):Book{
-  if(!bytes.byteLength||bytes.byteLength>LIMITS.fileBytes)throw new Error('FILE_SIZE_INVALID: File phải không rỗng và tối đa 25 MiB.');
-  if(!/\.(xlsx|xls|csv|tsv)$/i.test(name))throw new Error('FILE_FORMAT_INVALID: Định dạng file không được hỗ trợ.');
-  const data=XLSX.read(bytes,{type:'array',cellDates:true,raw:true,dense:true,sheetRows:LIMITS.rows+2});
+  const data=readSourceWorkbook(name,bytes);
   return makeBook(data,name,bytes.byteLength);
 }
 let database: duckdb.AsyncDuckDB | null = null;
@@ -133,7 +124,8 @@ function kindFor(values: unknown[]): Kind {
 function asCell(value: unknown, kind: Kind): Cell {
   if (value === null || value === undefined || value === '') return null;
   if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null;
-  if (kind === 'number' && numericString(value)) return Number(value);
+  if (kind === 'number' && typeof value === 'number') return value;
+  if (kind === 'number' && typeof value === 'string' && numericString(value)) return losslessNumericCell(value);
   if (kind === 'boolean' && typeof value === 'boolean') return value;
   const str = String(value);
   if (str.length > LIMITS.textLength || str.includes('\0')) throw new Error('Ô dữ liệu quá dài hoặc chứa ký tự không hợp lệ.');
@@ -152,7 +144,7 @@ function prepare(book: XLSX.WorkBook, sheet: string, name: string, rules:SchemaR
   const width=selected.lastColumn-selected.firstColumn+1;
   if(layout && (ws['!merges']??[]).some(m=>m.s.r<=range.s.r&&m.e.r>=range.s.r&&m.s.c<=range.e.c&&m.e.c>=range.s.c))
     throw new Error('LAYOUT_MERGED_HEADER: Hàng tiêu đề có ô gộp. Hãy chọn hàng tiêu đề không gộp.');
-  const matrix=XLSX.utils.sheet_to_json<unknown[]>(ws,{header:1,raw:true,defval:null,blankrows:!!layout,range});
+  const matrix=readSheetRows(ws,sheet,range,!!layout);
   if(layout && (!matrix[0]||matrix[0].every(v=>v==null||String(v).trim()==='')))throw new Error('LAYOUT_EMPTY_HEADER: Hàng tiêu đề không có giá trị.');
   if (!matrix.length) throw new Error('Không có hàng tiêu đề.');
   const headers = normalizeHeaders(Array.from({ length: width }, (_, i) => matrix[0][i]));
@@ -259,7 +251,7 @@ function demoBook(): XLSX.WorkBook {
 const numberOrNull = (v: unknown): number | null => v === null || v === undefined ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 function convert(v: unknown, kind: Kind): Cell {
   if (v === null || v === undefined) return null;
-  if (kind === 'number') return numberOrNull(v);
+  if (kind === 'number') return typeof v === 'string' ? losslessNumericCell(v) : numberOrNull(v);
   if (kind === 'boolean') return String(v) === 'true';
   return String(v);
 }

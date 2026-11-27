@@ -1,4 +1,5 @@
 import {renamePivot} from './pivot-config.ts';
+import {losslessNumericCell} from './import-number.ts';
 import { LIMITS, compileReport } from './model.ts';
 import type { Cell, Column, Config, Kind } from './model.ts';
 
@@ -58,7 +59,9 @@ export function convertSchemaCell(value:unknown,mode:Exclude<SchemaMode,'auto'>)
     else if(typeof value==='string'){
       const s=value.trim();
       if(!(mode==='number'?plain:vietnamese).test(s))return undefined;
-      n=Number(mode==='number'?s:s.replaceAll('.','').replace(',','.'));
+      const normalized=mode==='number'?s:s.replaceAll('.','').replace(',','.');
+      n=Number(normalized);
+      if(Number.isFinite(n)&&(!Number.isInteger(n)||Number.isSafeInteger(n)))return losslessNumericCell(normalized);
     }else return undefined;
     return Number.isFinite(n)&&(!Number.isInteger(n)||Number.isSafeInteger(n))?n:undefined;
   }

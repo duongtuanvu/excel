@@ -1,5 +1,15 @@
 # KySheet — Excel report automation
 
+## Lập BCTC năm theo Thông tư 99
+
+Mở **BCTC TT99 → Tải mẫu nhập sổ**. Chế độ này lập BCTC riêng năm bằng VND cho doanh nghiệp đáp ứng giả định hoạt động liên tục, với năm tài chính bắt đầu từ ngày 01/01/2026 trở đi. B03-DN sử dụng phương pháp trực tiếp. [Biểu mẫu gốc trong Phụ lục IV](https://congbao.chinhphu.vn/van-ban/thong-tu-so-99-2025-tt-btc-46529/59652.htm)
+
+1. Điền doanh nghiệp, địa chỉ và ngày đầu/cuối năm tài chính. Chọn loại hình cổ phần nếu áp dụng.
+2. Dùng các tiêu đề trong mẫu để nhập bảng cân đối số phát sinh, nhật ký, công nợ TK 131 theo khách hàng và kỳ hạn, hoặc chỉ tiêu bổ sung có căn cứ. Gán mã chỉ tiêu và dấu theo nghiệp vụ thực tế. B01 so sánh cuối năm với đầu năm. B02 và B03 so sánh năm nay với năm trước.
+3. Chọn ô của một chỉ tiêu để xem nguồn hoặc bổ sung số liệu. Kiểm tra từng mục trong **Đối chiếu trước khi xuất**. Giá trị chưa xác định hiển thị **Cần bổ sung**. Chỉ xác nhận số 0 sau khi đã kiểm tra sổ.
+4. Mở **B09-DN**, điền các chính sách và bảng chi tiết áp dụng cho doanh nghiệp, rồi rà soát từng mục. Có thể chèn khung nội dung hoặc dán bảng từ Excel để giữ các cột.
+5. **Xuất bản nháp Excel** kèm danh sách chênh lệch và căn cứ. **Xuất BCTC Excel** tạo bốn biểu sau khi đạt các phép đối chiếu và hoàn thiện thuyết minh. **Lưu hồ sơ** tải tệp JSON gồm số liệu và căn cứ về máy. Dùng **Mở hồ sơ** để làm tiếp. Dữ liệu của chế độ này chỉ xử lý tại thiết bị.
+
 ## Chạy báo cáo kỳ mới
 
 Nhập file, thiết lập báo cáo rồi chọn **Workspace tài khoản → Lưu workspace**. Bạn có thể ghép nhiều bảng theo từng bước và dùng bảng đã biến đổi ở bước ghép tiếp theo. Workspace ghi nhớ nguồn, cột, phép ghép, các bước biến đổi và cấu hình báo cáo đang chọn. File Excel và kết quả tính nằm trong trình duyệt.

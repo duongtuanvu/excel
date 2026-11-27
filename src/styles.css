@@ -1047,6 +1047,10 @@ tfoot th { background: #eaf5ee; color: #19563f; font-weight: 750; }
   .pipeline-step { padding: 9px; }
   .pipeline-source small { margin-left: 0; }
 }
+@media (max-width: 400px) {
+  .mode-switcher .mode-pill { min-width: 0; padding-inline: 5px; }
+  .mode-switcher .mode-pill svg { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
